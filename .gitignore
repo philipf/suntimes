@@ -1,0 +1,15 @@
+# Binaries
+/suntimes
+/dist/
+*.exe
+*.out
+
+# Go
+/vendor/
+*.test
+coverage.out
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
