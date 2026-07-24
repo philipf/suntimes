@@ -6,10 +6,12 @@ on:
   pull_request:
     branches: [main]
 
-# A newer push to the same branch supersedes any run still in flight.
+# A newer push to a pull request supersedes any run still in flight. Pushes to
+# main are never cancelled: two merges in quick succession share the group, and
+# cancelling would leave the first commit on main with no completed CI status.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -18,6 +20,9 @@ jobs:
   check:
     name: gofmt, vet and tests
     runs-on: ubuntu-latest
+    # The suite takes well under a minute; anything near this is a hang, and
+    # the default ceiling is six hours.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
 

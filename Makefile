@@ -64,6 +64,8 @@ fmt-check: ## Fail if any Go source is unformatted
 	fi
 
 .PHONY: check
+# CI runs these prerequisites as separate steps, so a failure names which check
+# broke. Add a target here and add it to .github/workflows/ci.yml too.
 check: fmt-check vet test ## Run formatting, vet and tests
 
 .PHONY: tidy

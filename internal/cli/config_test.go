@@ -36,6 +36,17 @@ func writeConfig(t *testing.T, contents string) string {
 	return path
 }
 
+// mustLoadLocation resolves an IANA name the test itself depends on.
+func mustLoadLocation(t *testing.T, name string) *time.Location {
+	t.Helper()
+
+	zone, err := time.LoadLocation(name)
+	if err != nil {
+		t.Fatalf("loading timezone %q: %v", name, err)
+	}
+	return zone
+}
+
 // SUN-1, SUN-3: with no --config, the first run creates the sample at the
 // default location and says where it put it.
 func TestFirstRunCreatesSampleAtDefaultPath(t *testing.T) {
@@ -168,10 +179,7 @@ func TestRunPrintsARowForTheConfiguredLocation(t *testing.T) {
 	// the expectation is read in that same zone. Bracketing the host zone
 	// instead would pass only on a machine already set to it, and fail
 	// anywhere the two are on different sides of midnight.
-	zone, err := time.LoadLocation(timezone)
-	if err != nil {
-		t.Fatalf("loading %s returned error %v, want nil", timezone, err)
-	}
+	zone := mustLoadLocation(t, timezone)
 
 	// Bracket the run, because the date in that zone can turn over mid-test.
 	before := time.Now().In(zone).Format("2006-01-02")
