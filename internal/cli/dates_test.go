@@ -308,18 +308,10 @@ func TestResolveDatesAllowsExactlyTheMaximum(t *testing.T) {
 func dateColumn(t *testing.T, out string) []string {
 	t.Helper()
 
-	trimmed := strings.TrimSuffix(out, "\n")
-	if trimmed == "" {
-		t.Fatal("run printed nothing, want at least one row")
-	}
-
-	lines := strings.Split(trimmed, "\n")
-	dates := make([]string, 0, len(lines))
-	for _, line := range lines {
-		if !rowPattern.MatchString(line) {
-			t.Fatalf("output line %q does not match a result row %s", line, rowPattern)
-		}
-		dates = append(dates, strings.Fields(line)[0])
+	rows := resultRows(t, out)
+	dates := make([]string, 0, len(rows))
+	for _, row := range rows {
+		dates = append(dates, row[0])
 	}
 	return dates
 }

@@ -2,13 +2,38 @@ package cli
 
 import (
 	"bytes"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
 
 	"github.com/philipf/suntimes/internal/buildinfo"
+	"github.com/philipf/suntimes/internal/render"
 )
+
+// TestMain fixes the styling decision before any test in this package runs.
+//
+// Every test captures output in a buffer, so plain is what they must all see.
+// The production default is detection against the process's real standard
+// output, and `go test` sometimes hands the test binary the developer's own
+// terminal — which would make the suite pass or fail depending on how it was
+// launched. Pinning it here keeps the question "does the command style what it
+// writes" rather than "where was this run from".
+func TestMain(m *testing.M) {
+	outputStyle = func() render.Style { return render.Plain() }
+	os.Exit(m.Run())
+}
+
+// pinStyle replaces the styling decision for the duration of one test, so both
+// sides of it can be exercised without a terminal to run in.
+func pinStyle(t *testing.T, style render.Style) {
+	t.Helper()
+
+	previous := outputStyle
+	outputStyle = func() render.Style { return style }
+	t.Cleanup(func() { outputStyle = previous })
+}
 
 // execute runs a fresh root command with the given args, capturing everything
 // it writes. It returns the combined output and the error Execute reported.
@@ -171,5 +196,81 @@ func TestUnknownFlagIsAnError(t *testing.T) {
 func TestPositionalArgumentIsAnError(t *testing.T) {
 	if _, err := execute(t, "tomorrow"); err == nil {
 		t.Fatal("positional argument returned nil error, want a non-zero exit")
+	}
+}
+
+// reverseVideo is the escape the theme highlights today's row with (SUN-25).
+const reverseVideo = "\x1b[7m"
+
+// SUN-26: when the styling decision says plain — which is what redirected
+// output resolves to — not one escape byte reaches the stream, so the table
+// stays greppable and diffable. This is asserted on the bytes rather than on
+// how the output looks.
+func TestRunWritesPlainTextWhenOutputIsNotStyled(t *testing.T) {
+	fakeHome(t)
+	pinToday(t, "2026-07-25")
+	pinStyle(t, render.Plain())
+	path := writeConfig(t, "latitude = -36.8485\nlongitude = 174.7633\n")
+
+	out, err := execute(t, "--config", path, "--days", "3")
+	if err != nil {
+		t.Fatalf("run returned error %v, want nil\n---\n%s", err, out)
+	}
+
+	if index := strings.IndexByte(out, 0x1b); index >= 0 {
+		t.Fatalf("escape byte at offset %d of plain output:\n%q", index, out)
+	}
+	// The table itself is still there — a run that printed nothing would also
+	// have no escapes in it.
+	if rows := resultRows(t, out); len(rows) != 3 {
+		t.Errorf("run printed %d rows, want 3\n---\n%s", len(rows), out)
+	}
+}
+
+// SUN-25, SUN-27a: when the styling decision says style it, the table is themed
+// and today's row — the same date the range was built around — is the one
+// picked out.
+func TestRunHighlightsTodayWhenOutputIsStyled(t *testing.T) {
+	fakeHome(t)
+	today := pinToday(t, "2026-07-25")
+	pinStyle(t, render.Themed())
+	path := writeConfig(t, "latitude = -36.8485\nlongitude = 174.7633\n")
+
+	out, err := execute(t, "--config", path, "--from", "2026-07-24", "--to", "2026-07-26")
+	if err != nil {
+		t.Fatalf("run returned error %v, want nil\n---\n%s", err, out)
+	}
+	if !strings.Contains(out, "\x1b") {
+		t.Fatalf("styled output carries no escape codes at all:\n%q", out)
+	}
+
+	// Today is the middle row, so a renderer that highlighted the first row on
+	// principle would fail here.
+	for _, line := range strings.Split(strings.TrimSuffix(out, "\n"), "\n") {
+		isToday := strings.Contains(line, today.String())
+		if got := strings.Contains(line, reverseVideo); got != isToday {
+			t.Errorf("line highlighted = %t, want %t:\n%q", got, isToday, line)
+		}
+	}
+}
+
+// SUN-25: a range that does not contain today highlights nothing. 29 February
+// 2028 is a date the pinned clock will never be, and the run must neither
+// panic nor pick a row to highlight for want of the right one.
+func TestRunHighlightsNothingWhenTodayIsOutsideTheRange(t *testing.T) {
+	fakeHome(t)
+	pinToday(t, "2026-07-25")
+	pinStyle(t, render.Themed())
+	path := writeConfig(t, "latitude = -36.8485\nlongitude = 174.7633\n")
+
+	out, err := execute(t, "--config", path, "--date", "2028-02-29")
+	if err != nil {
+		t.Fatalf("run returned error %v, want nil\n---\n%s", err, out)
+	}
+	if strings.Contains(out, reverseVideo) {
+		t.Errorf("a row is highlighted although today is outside the range:\n%q", out)
+	}
+	if !strings.Contains(out, "\x1b") {
+		t.Errorf("styled output carries no escape codes at all:\n%q", out)
 	}
 }

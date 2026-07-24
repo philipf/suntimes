@@ -81,10 +81,81 @@ func TestFirstRunCreatesSampleAtFlagPath(t *testing.T) {
 	}
 }
 
-// rowPattern is one plain result row: date, three-letter weekday, then four
-// 24-hour times (SUN-21, SUN-22, SUN-23).
-var rowPattern = regexp.MustCompile(
-	`^(\d{4}-\d{2}-\d{2})  [A-Z][a-z]{2}(  (?:\d{2}:\d{2}|—)){4}$`)
+// cellPattern is the shape of each column of a result row: a YYYY-MM-DD date, a
+// three-letter weekday, then four 24-hour times or placeholders (SUN-21,
+// SUN-22, SUN-23).
+var cellPattern = []*regexp.Regexp{
+	regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`),
+	regexp.MustCompile(`^[A-Z][a-z]{2}$`),
+	regexp.MustCompile(`^(?:\d{2}:\d{2}|—)$`),
+	regexp.MustCompile(`^(?:\d{2}:\d{2}|—)$`),
+	regexp.MustCompile(`^(?:\d{2}:\d{2}|—)$`),
+	regexp.MustCompile(`^(?:\d{2}:\d{2}|—)$`),
+}
+
+// headings are the table's column names, in order (SUN-21).
+var headings = []string{"Date", "Day", "Dawn", "Sunrise", "Sunset", "Dusk"}
+
+// resultRows reads the command's output back as a table: it checks the borders
+// and the header are there, then returns the cells of each data row.
+//
+// Nothing here strips escape codes. Every test runs with output going to a
+// buffer, so a plain table is what the command must produce (SUN-26); a
+// stripping parser would hide exactly the bug these tests exist to catch.
+func resultRows(t *testing.T, out string) [][]string {
+	t.Helper()
+
+	if strings.ContainsRune(out, 0x1b) {
+		t.Fatalf("output written to a buffer contains an escape code:\n%q", out)
+	}
+
+	lines := strings.Split(strings.TrimSuffix(out, "\n"), "\n")
+	if len(lines) < 4 {
+		t.Fatalf("output is %d lines, too few for a bordered table:\n%s", len(lines), out)
+	}
+	// Top border, header, header rule, at least one row, bottom border.
+	for index, prefix := range map[int]string{0: "┌", 2: "├", len(lines) - 1: "└"} {
+		if !strings.HasPrefix(lines[index], prefix) {
+			t.Fatalf("line %d does not start with the border %q:\n%s", index, prefix, out)
+		}
+	}
+
+	rows := make([][]string, 0, len(lines)-4)
+	for index, line := range lines[1:] {
+		if !strings.HasPrefix(line, "│") {
+			continue
+		}
+		cells := strings.Split(strings.Trim(line, "│"), "│")
+		if len(cells) != len(headings) {
+			t.Fatalf("line %d has %d columns, want %d:\n%s", index+1, len(cells), len(headings), out)
+		}
+		for column, cell := range cells {
+			cells[column] = strings.TrimSpace(cell)
+		}
+		rows = append(rows, cells)
+	}
+
+	if len(rows) == 0 {
+		t.Fatalf("output has no header row at all:\n%s", out)
+	}
+	if got := strings.Join(rows[0], "|"); got != strings.Join(headings, "|") {
+		t.Fatalf("header row is %q, want %q", got, strings.Join(headings, "|"))
+	}
+	rows = rows[1:]
+	if len(rows) == 0 {
+		t.Fatalf("output has a header but no result rows:\n%s", out)
+	}
+
+	for index, row := range rows {
+		for column, pattern := range cellPattern {
+			if !pattern.MatchString(row[column]) {
+				t.Fatalf("row %d column %d is %q, want %s\n---\n%s",
+					index, column, row[column], pattern, out)
+			}
+		}
+	}
+	return rows
+}
 
 // SUN-2, SUN-6, SUN-20: a valid file is read from the --config path, and its
 // coordinates produce rows of times. SUN-11: the first row is today's.
@@ -100,18 +171,14 @@ func TestRunPrintsARowForTheConfiguredLocation(t *testing.T) {
 		t.Fatalf("run returned error %v, want nil", err)
 	}
 
-	lines := strings.Split(strings.TrimSuffix(out, "\n"), "\n")
-	if len(lines) != 7 {
-		t.Fatalf("run printed %d lines, want the default week of 7\n---\n%s", len(lines), out)
+	rows := resultRows(t, out)
+	if len(rows) != 7 {
+		t.Fatalf("run printed %d rows, want the default week of 7\n---\n%s", len(rows), out)
 	}
 
-	match := rowPattern.FindStringSubmatch(lines[0])
-	if match == nil {
-		t.Fatalf("output %q does not match a result row %s", lines[0], rowPattern)
-	}
 	// SUN-11: the window starts on the current date. Which days follow it is
 	// covered deterministically, against a pinned clock, in dates_test.go.
-	if date := match[1]; date != before && date != after {
+	if date := rows[0][0]; date != before && date != after {
 		t.Errorf("first row is for %s, want today (%s or %s)", date, before, after)
 	}
 }
@@ -139,8 +206,8 @@ func TestRunPrintsARowWithNoTimezoneConfigured(t *testing.T) {
 			if err != nil {
 				t.Fatalf("run returned error %v, want nil", err)
 			}
-			if !rowPattern.MatchString(strings.TrimSuffix(out, "\n")) {
-				t.Errorf("output %q does not match a result row %s", out, rowPattern)
+			if rows := resultRows(t, out); len(rows) != 1 {
+				t.Errorf("run printed %d rows, want 1\n---\n%s", len(rows), out)
 			}
 		})
 	}
@@ -179,9 +246,9 @@ func TestRunDisplaysTimesInTheConfiguredTimezone(t *testing.T) {
 	}
 }
 
-// singleRow runs the command against a configuration file and returns the one
-// row it printed.
-func singleRow(t *testing.T, path string) string {
+// singleRow runs the command against a configuration file and returns the cells
+// of the one row it printed.
+func singleRow(t *testing.T, path string) []string {
 	t.Helper()
 
 	// --days 1: this helper's contract is one row, and the default is a week.
@@ -190,28 +257,27 @@ func singleRow(t *testing.T, path string) string {
 		t.Fatalf("run with %s returned error %v, want nil", path, err)
 	}
 
-	row := strings.TrimSuffix(out, "\n")
-	if !rowPattern.MatchString(row) {
-		t.Fatalf("output %q does not match a result row %s", row, rowPattern)
+	rows := resultRows(t, out)
+	if len(rows) != 1 {
+		t.Fatalf("run with %s printed %d rows, want 1\n---\n%s", path, len(rows), out)
 	}
-	return row
+	return rows[0]
 }
 
 // clockCells reads the four time columns of a row as minutes since midnight.
-func clockCells(t *testing.T, row string) []int {
+func clockCells(t *testing.T, row []string) []int {
 	t.Helper()
 
 	const firstTimeColumn = 2 // date, day, then dawn, sunrise, sunset, dusk
-	cells := strings.Fields(row)
-	if len(cells) != firstTimeColumn+4 {
-		t.Fatalf("row %q has %d columns, want %d", row, len(cells), firstTimeColumn+4)
+	if len(row) != firstTimeColumn+4 {
+		t.Fatalf("row %v has %d columns, want %d", row, len(row), firstTimeColumn+4)
 	}
 
 	minutes := make([]int, 0, 4)
-	for _, cell := range cells[firstTimeColumn:] {
+	for _, cell := range row[firstTimeColumn:] {
 		parsed, err := time.Parse("15:04", cell)
 		if err != nil {
-			t.Fatalf("unparsable time cell %q in row %q: %v", cell, row, err)
+			t.Fatalf("unparsable time cell %q in row %v: %v", cell, row, err)
 		}
 		minutes = append(minutes, parsed.Hour()*60+parsed.Minute())
 	}

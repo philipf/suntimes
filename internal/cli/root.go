@@ -9,6 +9,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"os"
 
 	"github.com/spf13/cobra"
 
@@ -135,8 +136,15 @@ func run(cmd *cobra.Command, opts *Options) error {
 
 	place := sun.Place{Latitude: cfg.Latitude, Longitude: cfg.Longitude}
 
+	// Resolved once, in the display zone, and used twice: it anchors the
+	// default range and it is the row the table picks out. Asking the clock a
+	// second time inside the renderer could answer differently — the date can
+	// turn over between the two questions — and would leave the highlight on a
+	// row the range no longer contains.
+	today := currentDate(zone)
+
 	// SUN-11..SUN-17: the date flags become the days to show, ascending.
-	dates, err := resolveDates(opts, currentDate(zone))
+	dates, err := resolveDates(opts, today)
 	if err != nil {
 		return err
 	}
@@ -146,8 +154,24 @@ func run(cmd *cobra.Command, opts *Options) error {
 		days = append(days, sun.Times(place, date))
 	}
 
-	return render.Table(cmd.OutOrStdout(), days, zone)
+	return render.Table(cmd.OutOrStdout(), days, zone, render.Options{
+		Today: today,
+		Style: outputStyle(),
+	})
 }
+
+// outputStyle reports how much styling the results table may carry.
+//
+// The question is asked of os.Stdout, not of the stream the command writes to.
+// Those are the same file in a real run, but tests replace the command's
+// writer with a buffer, and a buffer cannot say what the user is looking at —
+// asking it would make the styling depend on how the code was called rather
+// than on where the output is going (SUN-26).
+//
+// It is a variable for the same reason currentDate is: it is a seam onto the
+// world outside the process, and tests need to stand on both sides of it
+// without a terminal to run in.
+var outputStyle = func() render.Style { return render.Detect(os.Stdout) }
 
 // report writes lines to the command's output stream, which tests replace with
 // a buffer.
