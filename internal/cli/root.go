@@ -7,6 +7,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
@@ -28,6 +29,11 @@ type Options struct {
 	Date string
 	// Days is the number of days to show, starting today (SUN-12).
 	Days int
+	// DaysSet records whether --days was supplied at all. The count alone
+	// cannot say: an explicit `--days 0` and an absent flag are both zero, and
+	// they mean opposite things — one is a mistake to report, the other the
+	// default week (SUN-11, SUN-15).
+	DaysSet bool
 	// From is the inclusive start of an explicit range, as YYYY-MM-DD (SUN-13).
 	From string
 	// To is the inclusive end of an explicit range, as YYYY-MM-DD (SUN-13).
@@ -63,7 +69,19 @@ func NewRootCommand() *cobra.Command {
 		SilenceUsage: true,
 		Version:      buildinfo.Version,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return run(cmd, opts)
+			// Only the parsed command knows which flags were actually typed.
+			opts.DaysSet = cmd.Flags().Changed("days")
+
+			err := run(cmd, opts)
+
+			// SUN-15: flags that cannot be combined are a usage error, so the
+			// usage that SilenceUsage suppresses for runtime failures is put
+			// back for these — the same treatment cobra gives an unknown flag.
+			var usage *usageError
+			if errors.As(err, &usage) {
+				cmd.SilenceUsage = false
+			}
+			return err
 		},
 	}
 
@@ -119,10 +137,11 @@ func run(cmd *cobra.Command, opts *Options) error {
 
 	place := sun.Place{Latitude: cfg.Latitude, Longitude: cfg.Longitude}
 
-	// Just today for now. Turning the flags in opts into a range of dates
-	// (SUN-11..SUN-17) is issue #5; the rest of the pipeline already works on
-	// a slice, so only this line changes.
-	dates := []sun.Date{sun.Today(zone)}
+	// SUN-11..SUN-17: the date flags become the days to show, ascending.
+	dates, err := resolveDates(opts, currentDate(zone))
+	if err != nil {
+		return err
+	}
 
 	days := make([]sun.Day, 0, len(dates))
 	for _, date := range dates {

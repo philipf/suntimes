@@ -16,6 +16,7 @@
 package sun
 
 import (
+	"fmt"
 	"time"
 
 	sunrise "github.com/nathan-osman/go-sunrise"
@@ -43,10 +44,28 @@ type Date struct {
 	Day   int
 }
 
+// dateLayout is the written form of a Date: YYYY-MM-DD (SUN-23).
+const dateLayout = "2006-01-02"
+
 // Today is the current calendar date as seen from zone. The zone matters: it
 // can already be tomorrow in Auckland while it is still today in London.
 func Today(zone *time.Location) Date {
 	return dateOf(time.Now().In(zone))
+}
+
+// ParseDate reads a date written as YYYY-MM-DD; it is the inverse of
+// Date.String. The layout is strict, so unpadded fields ("2026-7-1"), other
+// separators and impossible dates such as 30 February are all rejected rather
+// than guessed at (SUN-16).
+func ParseDate(value string) (Date, error) {
+	instant, err := time.Parse(dateLayout, value)
+	if err != nil {
+		// The stdlib message ("parsing time ... day out of range") describes
+		// its own machinery, not the user's flag, so it is replaced rather
+		// than wrapped.
+		return Date{}, fmt.Errorf("%q is not a calendar date in YYYY-MM-DD form", value)
+	}
+	return dateOf(instant), nil
 }
 
 // dateOf takes the calendar date an instant falls on, in its own zone.
@@ -63,7 +82,27 @@ func (d Date) Weekday() time.Weekday {
 
 // String renders the date as YYYY-MM-DD (SUN-23).
 func (d Date) String() string {
-	return d.time().Format("2006-01-02")
+	return d.time().Format(dateLayout)
+}
+
+// AddDays is the date n days after d; a negative n moves backwards. Month and
+// year boundaries are handled by the calendar itself, so 31 December plus one
+// day is 1 January of the next year and 28 February 2028 plus one day is the
+// 29th.
+func (d Date) AddDays(n int) Date {
+	return dateOf(d.time().AddDate(0, 0, n))
+}
+
+// DaysUntil is the whole number of days from d to other: zero for the same
+// date, positive when other is later and negative when it is earlier. Both
+// dates are midnight UTC, so no daylight-saving change can make a day count as
+// 23 or 25 hours here.
+//
+// Spans beyond roughly 292 years saturate rather than wrap, because that is
+// what time.Time.Sub does; the sign is still right, which is all the callers
+// that reject an over-long range need.
+func (d Date) DaysUntil(other Date) int {
+	return int(other.time().Sub(d.time()) / (24 * time.Hour))
 }
 
 // time is midnight on the date in UTC, used only to reach time's calendar

@@ -82,7 +82,7 @@ var rowPattern = regexp.MustCompile(
 	`^(\d{4}-\d{2}-\d{2})  [A-Z][a-z]{2}(  (?:\d{2}:\d{2}|—)){4}$`)
 
 // SUN-2, SUN-6, SUN-20: a valid file is read from the --config path, and its
-// coordinates produce a row of times for today.
+// coordinates produce rows of times. SUN-11: the first row is today's.
 func TestRunPrintsARowForTheConfiguredLocation(t *testing.T) {
 	fakeHome(t)
 	path := writeConfig(t, "latitude = -36.8485\nlongitude = 174.7633\ntimezone = \"Pacific/Auckland\"\n")
@@ -96,17 +96,18 @@ func TestRunPrintsARowForTheConfiguredLocation(t *testing.T) {
 	}
 
 	lines := strings.Split(strings.TrimSuffix(out, "\n"), "\n")
-	if len(lines) != 1 {
-		t.Fatalf("run printed %d lines, want a single row\n---\n%s", len(lines), out)
+	if len(lines) != 7 {
+		t.Fatalf("run printed %d lines, want the default week of 7\n---\n%s", len(lines), out)
 	}
 
 	match := rowPattern.FindStringSubmatch(lines[0])
 	if match == nil {
 		t.Fatalf("output %q does not match a result row %s", lines[0], rowPattern)
 	}
-	// SUN-11 for a single day: the row is for the current date.
+	// SUN-11: the window starts on the current date. Which days follow it is
+	// covered deterministically, against a pinned clock, in dates_test.go.
 	if date := match[1]; date != before && date != after {
-		t.Errorf("row is for %s, want today (%s or %s)", date, before, after)
+		t.Errorf("first row is for %s, want today (%s or %s)", date, before, after)
 	}
 }
 
@@ -117,7 +118,7 @@ func TestRunPrintsARowWithNoTimezoneConfigured(t *testing.T) {
 	// 0,0 is the Gulf of Guinea, a valid location — not a missing value.
 	path := writeConfig(t, "latitude = 0\nlongitude = 0\n")
 
-	out, err := execute(t, "--config", path)
+	out, err := execute(t, "--config", path, "--days", "1")
 	if err != nil {
 		t.Fatalf("run returned error %v, want nil", err)
 	}

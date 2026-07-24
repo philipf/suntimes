@@ -1,6 +1,7 @@
 package sun
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -199,5 +200,125 @@ func TestTodayUsesTheGivenZone(t *testing.T) {
 	west := Today(time.FixedZone("west", -11*60*60))
 	if east.time().Before(west.time()) {
 		t.Errorf("Today(UTC+14) = %v is before Today(UTC-11) = %v", east, west)
+	}
+}
+
+// ParseDate is the inverse of Date.String, and is strict about the form it
+// accepts (SUN-16).
+func TestParseDateReadsCalendarDates(t *testing.T) {
+	valid := map[string]Date{
+		"2026-07-24": {Year: 2026, Month: time.July, Day: 24},
+		"2028-02-29": {Year: 2028, Month: time.February, Day: 29},
+		"1999-12-31": {Year: 1999, Month: time.December, Day: 31},
+		"2027-01-01": {Year: 2027, Month: time.January, Day: 1},
+	}
+	for value, want := range valid {
+		got, err := ParseDate(value)
+		if err != nil {
+			t.Errorf("ParseDate(%q) returned error %v, want %v", value, err, want)
+			continue
+		}
+		if got != want {
+			t.Errorf("ParseDate(%q) = %v, want %v", value, got, want)
+		}
+		if roundTrip := got.String(); roundTrip != value {
+			t.Errorf("ParseDate(%q).String() = %q, want the value back", value, roundTrip)
+		}
+	}
+
+	invalid := []string{
+		"",                     // nothing at all
+		"2026-7-1",             // unpadded fields
+		"2026/07/24",           // wrong separator
+		"24-07-2026",           // wrong order
+		"2026-13-01",           // no thirteenth month
+		"2026-02-30",           // not on the calendar
+		"2027-02-29",           // 2027 is not a leap year
+		"2026-07-24 ",          // trailing space
+		"2026-07-24T00:00:00Z", // more than a date
+		"today",                // not a date at all
+	}
+	for _, value := range invalid {
+		if got, err := ParseDate(value); err == nil {
+			t.Errorf("ParseDate(%q) = %v, want an error", value, got)
+		} else if !strings.Contains(err.Error(), "YYYY-MM-DD") {
+			t.Errorf("ParseDate(%q) error %q does not say what form it wanted", value, err)
+		}
+	}
+}
+
+// AddDays walks the calendar, so month lengths, year ends and leap days are
+// handled by the calendar rather than by arithmetic on the day number.
+func TestAddDaysCrossesCalendarBoundaries(t *testing.T) {
+	tests := []struct {
+		from string
+		days int
+		want string
+	}{
+		{"2026-07-24", 0, "2026-07-24"},
+		{"2026-07-24", 1, "2026-07-25"},
+		{"2026-07-31", 1, "2026-08-01"},   // month rollover
+		{"2026-12-31", 1, "2027-01-01"},   // year rollover
+		{"2026-01-01", -1, "2025-12-31"},  // backwards over a year end
+		{"2028-02-28", 1, "2028-02-29"},   // leap day exists
+		{"2027-02-28", 1, "2027-03-01"},   // and does not, a year earlier
+		{"2028-02-29", 365, "2029-02-28"}, // a year on from a leap day
+		{"2026-11-15", 92, "2027-02-15"},  // a long span across months
+	}
+
+	for _, test := range tests {
+		from, err := ParseDate(test.from)
+		if err != nil {
+			t.Fatalf("unparsable test date %q: %v", test.from, err)
+		}
+		if got := from.AddDays(test.days).String(); got != test.want {
+			t.Errorf("%s.AddDays(%d) = %s, want %s", test.from, test.days, got, test.want)
+		}
+	}
+}
+
+// DaysUntil counts whole calendar days, in either direction.
+func TestDaysUntilCountsCalendarDays(t *testing.T) {
+	tests := []struct {
+		from string
+		to   string
+		want int
+	}{
+		{"2026-07-24", "2026-07-24", 0},
+		{"2026-07-24", "2026-07-25", 1},
+		{"2026-07-25", "2026-07-24", -1},
+		{"2026-12-31", "2027-01-01", 1},
+		{"2028-02-28", "2028-03-01", 2}, // a leap day sits in between
+		{"2027-02-28", "2027-03-01", 1}, // and does not, a year earlier
+		{"2026-01-01", "2026-12-31", 364},
+		{"2028-01-01", "2028-12-31", 365}, // a leap year is a day longer
+	}
+
+	for _, test := range tests {
+		from, err := ParseDate(test.from)
+		if err != nil {
+			t.Fatalf("unparsable test date %q: %v", test.from, err)
+		}
+		to, err := ParseDate(test.to)
+		if err != nil {
+			t.Fatalf("unparsable test date %q: %v", test.to, err)
+		}
+		if got := from.DaysUntil(to); got != test.want {
+			t.Errorf("%s.DaysUntil(%s) = %d, want %d", test.from, test.to, got, test.want)
+		}
+	}
+}
+
+// AddDays and DaysUntil are two views of the same walk, so stepping n days out
+// and counting back must agree — including across a daylight-saving change,
+// which cannot shorten a calendar day here.
+func TestAddDaysAndDaysUntilAgree(t *testing.T) {
+	start := Date{Year: 2026, Month: time.March, Day: 25}
+
+	for step := -400; step <= 400; step++ {
+		if got := start.DaysUntil(start.AddDays(step)); got != step {
+			t.Fatalf("%s.AddDays(%d) is %d days away, want %d",
+				start, step, got, step)
+		}
 	}
 }
