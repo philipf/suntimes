@@ -3,9 +3,14 @@ package render
 import (
 	"bytes"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	// The daylight-saving test names real IANA zones, so the test binary
+	// carries the database rather than depending on the host having one.
+	_ "time/tzdata"
 
 	"github.com/philipf/suntimes/internal/sun"
 )
@@ -86,6 +91,186 @@ func TestRowRendersInTheGivenZone(t *testing.T) {
 	if got, want := Row(day, east), "2026-07-24  Fri  00:00  00:00  00:00  00:00"; got != want {
 		t.Errorf("Row() in UTC+12 = %q, want %q", got, want)
 	}
+}
+
+// dstDay is one day of a range that spans a daylight-saving transition: the
+// calendar date the row is about, its four event instants written in UTC, and
+// the row those instants must render as in the zone under test.
+//
+// The instants are UTC because that is what the calculation produces — an
+// absolute moment, with no opinion about anybody's clock. Writing the fixture
+// in the display zone would assume the answer.
+type dstDay struct {
+	date                          string
+	dawn, sunrise, sunset, dusk   string
+	want                          string
+	sunriseShiftFromPreviousInMin int // 0 on the first day of the range
+}
+
+// SUN-10: a range spanning a daylight-saving transition shows the times a
+// person in that zone would read off a clock. The renderer does no arithmetic
+// of its own — the hour comes from the zone's rules applied to an absolute
+// instant — so the printed clock jumps by an hour on the transition day even
+// though consecutive sunrises are only a minute or two apart.
+//
+// Both directions are covered: London's clocks go back on 25 October 2026 (BST
+// to GMT at 02:00 local, when 01:00 UTC comes round) and Auckland's go forward
+// on 27 September 2026 (NZST to NZDT at 02:00 local, at 14:00 UTC the day
+// before). A tool that stored a fixed offset instead of a zone would print the
+// first day of each range correctly and every day after it an hour out.
+func TestTableFollowsDaylightSavingTransition(t *testing.T) {
+	tests := map[string]struct {
+		zone string
+		days []dstDay
+	}{
+		"clocks go back in London": {
+			zone: "Europe/London",
+			days: []dstDay{{
+				date: "2026-10-24",
+				dawn: "2026-10-24T06:05:00Z", sunrise: "2026-10-24T06:39:00Z",
+				sunset: "2026-10-24T16:50:00Z", dusk: "2026-10-24T17:24:00Z",
+				want: "2026-10-24  Sat  07:05  07:39  17:50  18:24", // BST, UTC+1
+			}, {
+				date: "2026-10-25",
+				dawn: "2026-10-25T06:07:00Z", sunrise: "2026-10-25T06:41:00Z",
+				sunset: "2026-10-25T16:48:00Z", dusk: "2026-10-25T17:22:00Z",
+				want: "2026-10-25  Sun  06:07  06:41  16:48  17:22", // GMT, UTC+0
+				// The sun rose two minutes later than the day before, but the
+				// clock had gone back an hour, so the printed time is 58
+				// minutes earlier.
+				sunriseShiftFromPreviousInMin: -58,
+			}, {
+				date: "2026-10-26",
+				dawn: "2026-10-26T06:08:00Z", sunrise: "2026-10-26T06:43:00Z",
+				sunset: "2026-10-26T16:46:00Z", dusk: "2026-10-26T17:20:00Z",
+				want:                          "2026-10-26  Mon  06:08  06:43  16:46  17:20", // GMT, and stays there
+				sunriseShiftFromPreviousInMin: 2,
+			}},
+		},
+		"clocks go forward in Auckland": {
+			zone: "Pacific/Auckland",
+			days: []dstDay{{
+				date: "2026-09-26",
+				dawn: "2026-09-25T17:39:00Z", sunrise: "2026-09-25T18:05:00Z",
+				sunset: "2026-09-26T06:20:00Z", dusk: "2026-09-26T06:46:00Z",
+				want: "2026-09-26  Sat  05:39  06:05  18:20  18:46", // NZST, UTC+12
+			}, {
+				date: "2026-09-27",
+				dawn: "2026-09-26T17:38:00Z", sunrise: "2026-09-26T18:04:00Z",
+				sunset: "2026-09-27T06:21:00Z", dusk: "2026-09-27T06:46:00Z",
+				want: "2026-09-27  Sun  06:38  07:04  19:21  19:46", // NZDT, UTC+13
+				// A minute earlier than the day before, an hour later on the
+				// clock.
+				sunriseShiftFromPreviousInMin: 59,
+			}, {
+				date: "2026-09-28",
+				dawn: "2026-09-27T17:36:00Z", sunrise: "2026-09-27T18:02:00Z",
+				sunset: "2026-09-28T06:21:00Z", dusk: "2026-09-28T06:47:00Z",
+				want:                          "2026-09-28  Mon  06:36  07:02  19:21  19:47", // NZDT, and stays there
+				sunriseShiftFromPreviousInMin: -2,
+			}},
+		},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			zone := mustLoadLocation(t, test.zone)
+
+			days := make([]sun.Day, 0, len(test.days))
+			for _, day := range test.days {
+				days = append(days, sun.Day{
+					Date:    mustParseDate(t, day.date),
+					Dawn:    sun.At(mustParseInstant(t, day.dawn)),
+					Sunrise: sun.At(mustParseInstant(t, day.sunrise)),
+					Sunset:  sun.At(mustParseInstant(t, day.sunset)),
+					Dusk:    sun.At(mustParseInstant(t, day.dusk)),
+				})
+			}
+
+			var out bytes.Buffer
+			if err := Table(&out, days, zone); err != nil {
+				t.Fatalf("Table returned error %v, want nil", err)
+			}
+
+			rows := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
+			if len(rows) != len(test.days) {
+				t.Fatalf("Table wrote %d rows, want %d:\n%s", len(rows), len(test.days), out.String())
+			}
+
+			for index, day := range test.days {
+				if rows[index] != day.want {
+					t.Errorf("row %d =\n%q\nwant\n%q", index, rows[index], day.want)
+				}
+				if index == 0 {
+					continue
+				}
+				// The rows above already pin the answer; this states the point
+				// of the fixture, so a failure says "the clock did not change"
+				// rather than only "row 1 differs".
+				got := sunriseCell(t, rows[index]) - sunriseCell(t, rows[index-1])
+				if got != day.sunriseShiftFromPreviousInMin {
+					t.Errorf("printed sunrise moved %+d minutes from %s to %s, want %+d",
+						got, test.days[index-1].date, day.date, day.sunriseShiftFromPreviousInMin)
+				}
+			}
+		})
+	}
+}
+
+// sunriseCell reads the sunrise column out of a rendered row as minutes since
+// midnight, so two rows can be compared as a person compares two clock times.
+func sunriseCell(t *testing.T, row string) int {
+	t.Helper()
+
+	const sunriseColumn = 3 // date, day, dawn, sunrise, …
+	cells := strings.Split(row, columnGap)
+	if len(cells) <= sunriseColumn {
+		t.Fatalf("row %q has %d columns, want at least %d", row, len(cells), sunriseColumn+1)
+	}
+
+	hours, minutes, found := strings.Cut(cells[sunriseColumn], ":")
+	if !found {
+		t.Fatalf("sunrise cell %q in row %q is not HH:MM", cells[sunriseColumn], row)
+	}
+	hour, hourErr := strconv.Atoi(hours)
+	minute, minuteErr := strconv.Atoi(minutes)
+	if hourErr != nil || minuteErr != nil {
+		t.Fatalf("unparsable sunrise cell %q in row %q", cells[sunriseColumn], row)
+	}
+	return hour*60 + minute
+}
+
+// mustLoadLocation resolves an IANA name the test itself depends on.
+func mustLoadLocation(t *testing.T, name string) *time.Location {
+	t.Helper()
+
+	zone, err := time.LoadLocation(name)
+	if err != nil {
+		t.Fatalf("loading timezone %q: %v", name, err)
+	}
+	return zone
+}
+
+// mustParseInstant reads an RFC 3339 fixture instant.
+func mustParseInstant(t *testing.T, value string) time.Time {
+	t.Helper()
+
+	instant, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		t.Fatalf("unparsable fixture instant %q: %v", value, err)
+	}
+	return instant
+}
+
+// mustParseDate reads a YYYY-MM-DD fixture date.
+func mustParseDate(t *testing.T, value string) sun.Date {
+	t.Helper()
+
+	parsed, err := time.Parse("2006-01-02", value)
+	if err != nil {
+		t.Fatalf("unparsable fixture date %q: %v", value, err)
+	}
+	return sun.Date{Year: parsed.Year(), Month: parsed.Month(), Day: parsed.Day()}
 }
 
 // SUN-27: an event that does not occur renders as the placeholder rather than

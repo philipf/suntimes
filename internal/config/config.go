@@ -13,6 +13,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/spf13/viper"
 )
@@ -23,10 +24,16 @@ type Config struct {
 	Latitude float64
 	// Longitude is decimal degrees east of Greenwich, -180..180 (SUN-5).
 	Longitude float64
-	// Timezone is an optional IANA name, e.g. "Pacific/Auckland". Empty means
-	// the host machine's local timezone (SUN-7, SUN-8). Validating the name and
-	// converting times is later work; it is only carried here.
+	// Timezone is an optional IANA name, e.g. "Pacific/Auckland", exactly as
+	// written in the file. Empty means the host machine's local timezone
+	// (SUN-7, SUN-8). It is kept alongside Zone so messages can quote what the
+	// user actually wrote.
 	Timezone string
+	// Zone is Timezone resolved to a location, and is never nil: an empty
+	// Timezone resolves to time.Local (SUN-8). Times are displayed in it
+	// (SUN-7), which is also what makes daylight saving fall out of the
+	// conversion rather than being computed (SUN-10).
+	Zone *time.Location
 	// Path is the file the values were read from, for use in messages.
 	Path string
 }
@@ -103,8 +110,9 @@ func CreateSampleIfMissing(path string) (bool, error) {
 }
 
 // Load reads and validates the configuration file at path. Parse failures
-// (SUN-4) and missing or out-of-range coordinates (SUN-5) are returned as
-// errors naming the file, for the caller to report before exiting non-zero.
+// (SUN-4), missing or out-of-range coordinates (SUN-5) and an unrecognised
+// timezone (SUN-9) are returned as errors naming the file, for the caller to
+// report before exiting non-zero.
 func Load(path string) (*Config, error) {
 	v := viper.New()
 	v.SetConfigFile(path)
@@ -133,13 +141,47 @@ func Load(path string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	zone, err := location(path, timezone)
+	if err != nil {
+		return nil, err
+	}
 
 	return &Config{
 		Latitude:  latitude,
 		Longitude: longitude,
 		Timezone:  timezone,
+		Zone:      zone,
 		Path:      path,
 	}, nil
+}
+
+// location resolves a configured IANA name to the zone times are displayed in.
+//
+// Resolution lives here, with the other validation, rather than at the point of
+// display: an unusable timezone is a bad configuration file in exactly the way
+// an out-of-range latitude is, and reporting it takes the same two facts — the
+// value the user wrote and the file it came from — which only this package
+// holds. A name that survives Load is one every caller can use unchecked.
+func location(path, name string) (*time.Location, error) {
+	// SUN-8: nothing configured means the host machine's local timezone.
+	if name == "" {
+		return time.Local, nil
+	}
+
+	// SUN-7. The lookup consults the host's timezone database and then the copy
+	// embedded by the time/tzdata import in main, so a static binary on a
+	// machine with no database of its own still resolves the name (NFR-1).
+	zone, err := time.LoadLocation(name)
+	if err != nil {
+		// SUN-9: never fall back to local time here. A name that does not
+		// resolve is far more likely to be a typo than a request for the host
+		// zone, and silently showing the wrong zone's times is the one outcome
+		// the user cannot detect from the output.
+		return nil, fmt.Errorf(
+			"%s has an invalid %s value %q: expected a recognised IANA timezone name such as %q, or %q for this machine's local timezone",
+			path, keyTimezone, name, "Pacific/Auckland", "")
+	}
+	return zone, nil
 }
 
 // coordinate reads a required decimal-degrees value and checks it against its

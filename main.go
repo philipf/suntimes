@@ -5,6 +5,13 @@ package main
 import (
 	"os"
 
+	// Embed the IANA timezone database in the binary so a configured timezone
+	// resolves even where the host has no database of its own — a scratch
+	// container, or Windows, which has none in the form Go reads (NFR-1,
+	// SUN-7). Go consults the host's database first and only falls back to this
+	// copy, so a machine with fresher data still wins.
+	_ "time/tzdata"
+
 	"github.com/philipf/suntimes/internal/cli"
 )
 

@@ -9,7 +9,6 @@ package cli
 import (
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -128,12 +127,11 @@ func run(cmd *cobra.Command, opts *Options) error {
 		return err
 	}
 
-	// SUN-8: with nothing configured, times are shown in the host machine's
-	// local timezone. Honouring cfg.Timezone instead (SUN-7, SUN-9, SUN-10) is
-	// issue #4, and hooks in here: resolve the configured name to a
-	// *time.Location and use it in place of time.Local. Everything downstream
-	// already takes the display zone as a parameter.
-	zone := time.Local
+	// SUN-7, SUN-8: the configured timezone, already resolved and validated by
+	// Load, or the host machine's local timezone when none is configured.
+	// Everything downstream takes the display zone as a parameter, so nothing
+	// else needs to know which it got.
+	zone := cfg.Zone
 
 	place := sun.Place{Latitude: cfg.Latitude, Longitude: cfg.Longitude}
 

@@ -5,6 +5,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	// The tests below name real IANA zones, so the test binary carries the
+	// database rather than depending on the host having one — the same
+	// guarantee main gives the shipped binary.
+	_ "time/tzdata"
 )
 
 // writeConfig puts contents in a fresh temporary file and returns its path.
@@ -279,22 +285,27 @@ func TestLoadRejectsOutOfRangeCoordinates(t *testing.T) {
 	}
 }
 
-// The timezone is carried through untouched; validating it is later work.
-func TestLoadCarriesTimezone(t *testing.T) {
+// SUN-7, SUN-8: a configured name is carried through as written and resolved
+// to the zone times are displayed in; nothing configured resolves to the host
+// machine's local timezone.
+func TestLoadResolvesTimezone(t *testing.T) {
 	tests := map[string]struct {
 		contents string
 		timezone string
+		zone     *time.Location
 	}{
 		"iana name": {
 			contents: "latitude = 0\nlongitude = 0\ntimezone = \"Europe/London\"\n",
 			timezone: "Europe/London",
+			zone:     mustLoadLocation(t, "Europe/London"),
 		},
-		"absent": {contents: "latitude = 0\nlongitude = 0\n"},
-		"blank":  {contents: "latitude = 0\nlongitude = 0\ntimezone = \"\"\n"},
-		"not validated here": {
-			contents: "latitude = 0\nlongitude = 0\ntimezone = \"Mars/Olympus_Mons\"\n",
-			timezone: "Mars/Olympus_Mons",
+		"southern hemisphere name": {
+			contents: "latitude = -36.8485\nlongitude = 174.7633\ntimezone = \"Pacific/Auckland\"\n",
+			timezone: "Pacific/Auckland",
+			zone:     mustLoadLocation(t, "Pacific/Auckland"),
 		},
+		"absent": {contents: "latitude = 0\nlongitude = 0\n", zone: time.Local},
+		"blank":  {contents: "latitude = 0\nlongitude = 0\ntimezone = \"\"\n", zone: time.Local},
 	}
 
 	for name, test := range tests {
@@ -308,8 +319,66 @@ func TestLoadCarriesTimezone(t *testing.T) {
 			if cfg.Timezone != test.timezone {
 				t.Errorf("Timezone = %q, want %q", cfg.Timezone, test.timezone)
 			}
+			if cfg.Zone == nil {
+				t.Fatal("Zone is nil, want a usable location for every valid configuration")
+			}
+			// By name, not by pointer: LoadLocation builds a fresh Location on
+			// every call. The fallback cases are the exception — they must be
+			// time.Local itself — and are checked as such below.
+			if cfg.Zone.String() != test.zone.String() {
+				t.Errorf("Zone = %v, want %v", cfg.Zone, test.zone)
+			}
+			if test.timezone == "" && cfg.Zone != time.Local {
+				t.Errorf("Zone = %v, want the host machine's local timezone", cfg.Zone)
+			}
 		})
 	}
+}
+
+// SUN-9: an unrecognised IANA name is a bad configuration file, reported like
+// any other — naming the offending value and the file it came from — and never
+// quietly downgraded to local time.
+func TestLoadRejectsUnrecognisedTimezone(t *testing.T) {
+	tests := map[string]string{
+		"not a place":       "Mars/Olympus_Mons",
+		"misspelled region": "Pacific/Aukland",
+		"windows name":      "New Zealand Standard Time",
+		"utc offset":        "UTC+12",
+		"path traversal":    "../../etc/passwd",
+	}
+
+	for name, timezone := range tests {
+		t.Run(name, func(t *testing.T) {
+			path := writeConfig(t,
+				"latitude = 0\nlongitude = 0\ntimezone = \""+timezone+"\"\n")
+
+			cfg, err := Load(path)
+			if err == nil {
+				t.Fatalf("Load accepted timezone %q, returning %+v, want an error", timezone, cfg)
+			}
+			message := err.Error()
+			if !strings.Contains(message, path) {
+				t.Errorf("error %q does not name the file %q", message, path)
+			}
+			if !strings.Contains(message, timezone) {
+				t.Errorf("error %q does not quote the offending value %q", message, timezone)
+			}
+			if !strings.Contains(message, keyTimezone) {
+				t.Errorf("error %q does not name the %s key", message, keyTimezone)
+			}
+		})
+	}
+}
+
+// mustLoadLocation resolves an IANA name the test itself depends on.
+func mustLoadLocation(t *testing.T, name string) *time.Location {
+	t.Helper()
+
+	zone, err := time.LoadLocation(name)
+	if err != nil {
+		t.Fatalf("loading timezone %q: %v", name, err)
+	}
+	return zone
 }
 
 // The file's extension does not decide the format; TOML is assumed (SUN-2).
