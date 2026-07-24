@@ -161,12 +161,22 @@ func resultRows(t *testing.T, out string) [][]string {
 // coordinates produce rows of times. SUN-11: the first row is today's.
 func TestRunPrintsARowForTheConfiguredLocation(t *testing.T) {
 	fakeHome(t)
-	path := writeConfig(t, "latitude = -36.8485\nlongitude = 174.7633\ntimezone = \"Pacific/Auckland\"\n")
+	const timezone = "Pacific/Auckland"
+	path := writeConfig(t, "latitude = -36.8485\nlongitude = 174.7633\ntimezone = \""+timezone+"\"\n")
 
-	// Bracket the run, because the local date can turn over mid-test.
-	before := time.Now().In(time.Local).Format("2006-01-02")
+	// SUN-11's "today" is today in the configured timezone, not the host's, so
+	// the expectation is read in that same zone. Bracketing the host zone
+	// instead would pass only on a machine already set to it, and fail
+	// anywhere the two are on different sides of midnight.
+	zone, err := time.LoadLocation(timezone)
+	if err != nil {
+		t.Fatalf("loading %s returned error %v, want nil", timezone, err)
+	}
+
+	// Bracket the run, because the date in that zone can turn over mid-test.
+	before := time.Now().In(zone).Format("2006-01-02")
 	out, err := execute(t, "--config", path)
-	after := time.Now().In(time.Local).Format("2006-01-02")
+	after := time.Now().In(zone).Format("2006-01-02")
 	if err != nil {
 		t.Fatalf("run returned error %v, want nil", err)
 	}
