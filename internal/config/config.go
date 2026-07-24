@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"math"
 	"os"
 	"path/filepath"
 	"time"
@@ -198,6 +199,15 @@ func coordinate(v *viper.Viper, path, key string, lowest, highest float64) (floa
 	if !ok {
 		return 0, fmt.Errorf("%s has an invalid %s value %#v: expected a number in decimal degrees (%g..%g)",
 			path, key, raw, lowest, highest)
+	}
+	// TOML has literals for NaN and the infinities, and NaN is the one value the
+	// range check below cannot reject: every comparison against a NaN is false,
+	// so it would pass as a location and reach the astronomy, where it makes the
+	// sun calculation yield a time in the year 292277026596 instead of an honest
+	// "this does not happen" (SUN-5, SUN-27).
+	if math.IsNaN(degrees) || math.IsInf(degrees, 0) {
+		return 0, fmt.Errorf("%s has %s %v, which is not a number of decimal degrees in the range %g..%g",
+			path, key, degrees, lowest, highest)
 	}
 	if degrees < lowest || degrees > highest {
 		return 0, fmt.Errorf("%s has %s %g, which is outside the valid range %g..%g",

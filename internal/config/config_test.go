@@ -396,3 +396,41 @@ func TestLoadReadsTOMLRegardlessOfExtension(t *testing.T) {
 		t.Errorf("loaded %g,%g want 51.5,-0.12", cfg.Latitude, cfg.Longitude)
 	}
 }
+
+// SUN-5: a coordinate that is not a finite number is rejected.
+//
+// TOML has literals for NaN and the infinities, so these are values a file can
+// actually contain. NaN is the one the ordinary range check cannot catch —
+// every comparison against a NaN is false, so `latitude = nan` would otherwise
+// pass validation as a location and go on to the sun calculation, which turns
+// it into a time in the year 292277026596 rather than into an honest absent
+// event (SUN-27).
+func TestLoadRejectsCoordinatesThatAreNotNumbers(t *testing.T) {
+	tests := map[string]struct {
+		contents string
+		key      string
+	}{
+		"NaN latitude":       {contents: "latitude = nan\nlongitude = 15.63\n", key: "latitude"},
+		"NaN longitude":      {contents: "latitude = 78.22\nlongitude = nan\n", key: "longitude"},
+		"positive infinity":  {contents: "latitude = inf\nlongitude = 15.63\n", key: "latitude"},
+		"negative infinity":  {contents: "latitude = -inf\nlongitude = 15.63\n", key: "latitude"},
+		"infinite longitude": {contents: "latitude = 78.22\nlongitude = +inf\n", key: "longitude"},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			path := writeConfig(t, test.contents)
+
+			cfg, err := Load(path)
+			if err == nil {
+				t.Fatalf("Load accepted %s as %v, want an error", name, cfg)
+			}
+			if !strings.Contains(err.Error(), test.key) {
+				t.Errorf("error %q does not name the key %q", err, test.key)
+			}
+			if !strings.Contains(err.Error(), path) {
+				t.Errorf("error %q does not name the file %q", err, path)
+			}
+		})
+	}
+}

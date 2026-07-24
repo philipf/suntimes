@@ -352,8 +352,14 @@ func TestThemedTableDegradesForALimitedColourTerminal(t *testing.T) {
 // SUN-27: an event that does not occur renders as the placeholder rather than a
 // misleading time, and the row it is in stays the same width as every other —
 // the placeholder is one character but three bytes, and a table that measured
-// bytes would draw a ragged grid. Issue #7 adds the detection that produces
-// these; this is what proves the layout is already ready for them.
+// bytes would draw a ragged grid.
+//
+// Both styles are checked, because the requirement is about what the user sees
+// and the user may be looking at either: a terminal or a file (SUN-25, SUN-26).
+// Only the four rows below distinguish real per-event detection from a guard
+// that could blank a row but not part of one — the middle two are mixed, and
+// mixed in opposite directions, which is what a polar spring and a polar autumn
+// actually produce.
 func TestTableRendersAbsentEventsAsAlignedPlaceholders(t *testing.T) {
 	zone := time.UTC
 	date := sun.Date{Year: 2026, Month: time.June, Day: 21}
@@ -362,36 +368,58 @@ func TestTableRendersAbsentEventsAsAlignedPlaceholders(t *testing.T) {
 	days := []sun.Day{{
 		Date: date, Dawn: moment, Sunrise: moment, Sunset: moment, Dusk: moment,
 	}, {
+		// Continuous civil twilight: the sun rises and sets, but twilight
+		// never begins or ends.
 		Date:    date.AddDays(1),
 		Dawn:    sun.Never(),
 		Sunrise: at(t, date, "02:30:00", zone),
 		Sunset:  at(t, date, "23:30:00", zone),
 		Dusk:    sun.Never(),
 	}, {
+		// Polar night with civil twilight: the reverse mixture.
 		Date:    date.AddDays(2),
+		Dawn:    at(t, date, "09:15:00", zone),
+		Sunrise: sun.Never(),
+		Sunset:  sun.Never(),
+		Dusk:    at(t, date, "13:45:00", zone),
+	}, {
+		// Midnight sun, or polar night with no twilight at all: nothing.
+		Date:    date.AddDays(3),
 		Dawn:    sun.Never(),
 		Sunrise: sun.Never(),
 		Sunset:  sun.Never(),
 		Dusk:    sun.Never(),
 	}}
 
-	out := render(t, days, zone, Options{})
-	table := parseTable(t, out)
-
 	wants := [][]string{
 		{"2026-06-21", "Sun", "05:00", "05:00", "05:00", "05:00"},
 		{"2026-06-22", "Mon", Placeholder, "02:30", "23:30", Placeholder},
-		{"2026-06-23", "Tue", Placeholder, Placeholder, Placeholder, Placeholder},
+		{"2026-06-23", "Tue", "09:15", Placeholder, Placeholder, "13:45"},
+		{"2026-06-24", "Wed", Placeholder, Placeholder, Placeholder, Placeholder},
 	}
-	for index, want := range wants {
-		if got := strings.Join(table.rows[index], "|"); got != strings.Join(want, "|") {
-			t.Errorf("row %d = %q, want %q", index, got, strings.Join(want, "|"))
-		}
+
+	for name, style := range map[string]Style{"plain": Plain(), "themed": Themed()} {
+		t.Run(name, func(t *testing.T) {
+			out := render(t, days, zone, Options{Today: date, Style: style})
+			table := parseTable(t, out)
+
+			for index, want := range wants {
+				if got := strings.Join(table.rows[index], "|"); got != strings.Join(want, "|") {
+					t.Errorf("row %d = %q, want %q", index, got, strings.Join(want, "|"))
+				}
+			}
+			if !strings.Contains(out, Placeholder) {
+				t.Errorf("no placeholder reached the %s output at all:\n%s", name, out)
+			}
+			if strings.Contains(out, "00:00") {
+				t.Errorf("an absent event printed a time:\n%s", out)
+			}
+			// Alignment is measured on the characters the terminal draws, so
+			// the theme's escape sequences — which occupy no columns — come
+			// out first. Under Plain there are none to remove.
+			assertRectangular(t, escapePattern.ReplaceAllString(out, ""))
+		})
 	}
-	if strings.Contains(out, "00:00") {
-		t.Errorf("an absent event printed a time:\n%s", out)
-	}
-	assertRectangular(t, out)
 }
 
 // A table of one row and a table of many are both drawn correctly: nothing in

@@ -161,6 +161,35 @@ type Day struct {
 // The returned instants are absolute; rendering them in a display timezone is
 // the caller's job, which is what keeps daylight saving out of the astronomy
 // (SUN-10).
+//
+// # No-event days
+//
+// The four events come from two separate calculations, each with its own
+// threshold: sunrise and sunset are the sun's upper edge at the horizon, which
+// go-sunrise takes as an elevation of −0.83°, while dawn and dusk are civil
+// twilight at −6° (SUN-18). Each calculation asks whether the sun reaches its
+// own elevation on that day, and the two answer independently — which is what
+// lets one row hold real times beside placeholders (SUN-27).
+//
+// At 78.22°N, 15.63°E (Longyearbyen) in 2026 every polar condition occurs, and
+// each leaves a different pattern:
+//
+//   - 13 Nov – 29 Jan, polar night with no twilight: the sun stays below −6° all
+//     day, reaching neither threshold, so all four events are absent.
+//   - 30 Jan – 15 Feb and 27 Oct – 12 Nov, polar night with civil twilight: the
+//     sun climbs past −6° but never past −0.83°, so dawn and dusk are real times
+//     while sunrise and sunset are absent.
+//   - 5 – 18 Apr and 25 Aug – 7 Sep, continuous civil twilight: the sun sets but
+//     never falls below −6°, so sunrise and sunset are real times while dawn and
+//     dusk are absent — the reverse mixture.
+//   - 19 Apr – 24 Aug, midnight sun: the sun stays above the horizon, crossing
+//     neither threshold, so all four events are absent.
+//
+// Within one threshold the two events stand or fall together, because the model
+// places both the same distance either side of that day's solar noon. That is a
+// property of the astronomy rather than of this translation: a day on which the
+// sun genuinely rises and then never sets is a boundary the model resolves to
+// the nearer whole day.
 func Times(place Place, date Date) Day {
 	sunriseAt, sunsetAt := sunrise.SunriseSunset(
 		place.Latitude, place.Longitude, date.Year, date.Month, date.Day)
@@ -168,24 +197,50 @@ func Times(place Place, date Date) Day {
 		place.Latitude, place.Longitude, civilTwilightElevation,
 		date.Year, date.Month, date.Day)
 
+	// Every event is converted on its own. Nothing here pairs them up, and no
+	// event's absence is allowed to decide another's.
 	return Day{
 		Date:    date,
-		Dawn:    moment(dawnAt),
-		Sunrise: moment(sunriseAt),
-		Sunset:  moment(sunsetAt),
-		Dusk:    moment(duskAt),
+		Dawn:    moment(dawnAt, date),
+		Sunrise: moment(sunriseAt, date),
+		Sunset:  moment(sunsetAt, date),
+		Dusk:    moment(duskAt, date),
 	}
 }
 
-// moment converts a go-sunrise result into a Moment. The library signals "this
-// event does not happen today" by returning the zero time.Time, so that
-// sentinel is translated here, at the boundary, and never enters the domain.
+// plausibleWindow is how far either side of midnight UTC on its own date a
+// genuine event may fall.
 //
-// This is a guard, not full polar handling: deciding no-event days properly —
-// telling midnight sun from polar night, and covering the cases the library
-// answers less clearly — is issue #7.
-func moment(instant time.Time) Moment {
-	if instant.IsZero() {
+// go-sunrise places every event within half a day of that date's mean solar
+// noon, and mean solar noon is noon UTC on the date shifted by the longitude,
+// at most half a day either way. A real event is therefore never more than 36
+// hours from midnight UTC on the date it was computed for. 48 leaves margin
+// without coming anywhere near admitting something that is not an event.
+const plausibleWindow = 48 * time.Hour
+
+// moment converts one go-sunrise result into a Moment, deciding for that event
+// alone whether it happens (SUN-27).
+//
+// The library has two ways of saying "not today", and they are not the same
+// way. TimeOfElevation tests its hour angle for NaN and returns the zero
+// time.Time. SunriseSunset instead tests for the ±math.MaxFloat64 that
+// HourAngle returns when the sun never rises or never sets — but HourAngle can
+// also return NaN, which an equality test cannot catch, and that NaN runs on
+// through the Julian-day conversion, through an int64 cast, and out as an
+// ordinary-looking time.Time in the year 292277026596. A NaN latitude reaches
+// it: `latitude = nan` is valid TOML and NaN fails no range comparison. Config
+// rejects that value now, so it cannot arrive from a file; this remains the
+// guarantee the domain makes on its own, which is the one SUN-27 rests on — no
+// sentinel, no zero, and nothing derived from a NaN leaves here wearing the
+// shape of a time.
+//
+// One question catches both: could this instant belong to this date at all?
+// Year 1 cannot, year 292277026596 cannot, and every real event can with a day
+// and a half to spare.
+func moment(instant time.Time, date Date) Moment {
+	midnight := date.time()
+	if instant.Before(midnight.Add(-plausibleWindow)) ||
+		instant.After(midnight.Add(plausibleWindow)) {
 		return Never()
 	}
 	return At(instant)

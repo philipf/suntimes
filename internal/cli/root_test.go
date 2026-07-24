@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -272,5 +273,138 @@ func TestRunHighlightsNothingWhenTodayIsOutsideTheRange(t *testing.T) {
 	}
 	if !strings.Contains(out, "\x1b") {
 		t.Errorf("styled output carries no escape codes at all:\n%q", out)
+	}
+}
+
+// longyearbyenConfig is Svalbard at 78.22°N, in UTC so the printed clock times
+// do not depend on the host's timezone database resolving Arctic/Longyearbyen.
+// Which events occur is a property of the calendar date and the latitude, so
+// the zone cannot change the pattern of placeholders either way.
+const longyearbyenConfig = "latitude = 78.22\nlongitude = 15.63\ntimezone = \"UTC\"\n"
+
+// SUN-27, end to end: a real polar location run through the whole command
+// prints a placeholder where an event does not occur, and a time where one
+// does — in the same row, for the dates where the two thresholds disagree.
+//
+// The two mixed ranges run opposite ways round. In November the sun climbs into
+// civil twilight but not to the horizon, so dawn and dusk are real and sunrise
+// and sunset are not; in April it clears the horizon but never falls 6° below
+// it again, so the reverse. A run that could only blank a whole row would fail
+// both.
+func TestRunShowsPlaceholdersForPolarNoEventDays(t *testing.T) {
+	fakeHome(t)
+	pinToday(t, "2026-07-25")
+	pinStyle(t, render.Plain())
+	path := writeConfig(t, longyearbyenConfig)
+
+	tests := []struct {
+		name string
+		from string
+		to   string
+		// want is each row's four time columns, with "—" for a placeholder and
+		// "time" for anything that must be a clock reading.
+		want [][4]string
+	}{
+		{
+			name: "polar night with civil twilight",
+			from: "2026-11-03", to: "2026-11-05",
+			want: [][4]string{
+				{"time", "—", "—", "time"},
+				{"time", "—", "—", "time"},
+				{"time", "—", "—", "time"},
+			},
+		},
+		{
+			name: "continuous civil twilight",
+			from: "2026-04-08", to: "2026-04-10",
+			want: [][4]string{
+				{"—", "time", "time", "—"},
+				{"—", "time", "time", "—"},
+				{"—", "time", "time", "—"},
+			},
+		},
+		{
+			name: "midnight sun",
+			from: "2026-06-20", to: "2026-06-21",
+			want: [][4]string{
+				{"—", "—", "—", "—"},
+				{"—", "—", "—", "—"},
+			},
+		},
+		{
+			name: "an ordinary polar day, unaffected",
+			from: "2026-03-01", to: "2026-03-01",
+			want: [][4]string{
+				{"time", "time", "time", "time"},
+			},
+		},
+	}
+
+	clock := regexp.MustCompile(`^\d{2}:\d{2}$`)
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			out, err := execute(t, "--config", path, "--from", test.from, "--to", test.to)
+			if err != nil {
+				t.Fatalf("run returned error %v, want nil\n---\n%s", err, out)
+			}
+
+			rows := resultRows(t, out)
+			if len(rows) != len(test.want) {
+				t.Fatalf("run printed %d rows, want %d\n---\n%s", len(rows), len(test.want), out)
+			}
+
+			for index, want := range test.want {
+				// Columns 2..5 are dawn, sunrise, sunset and dusk (SUN-21).
+				for column, expected := range want {
+					got := rows[index][column+2]
+					switch expected {
+					case render.Placeholder:
+						if got != render.Placeholder {
+							t.Errorf("row %d column %d = %q, want the placeholder %q\n---\n%s",
+								index, column+2, got, render.Placeholder, out)
+						}
+					default:
+						if !clock.MatchString(got) {
+							t.Errorf("row %d column %d = %q, want a HH:MM time\n---\n%s",
+								index, column+2, got, out)
+						}
+					}
+				}
+			}
+		})
+	}
+}
+
+// SUN-5, SUN-27: a NaN coordinate is rejected before it can reach the
+// astronomy. `latitude = nan` is valid TOML, and NaN compares false against
+// every bound, so nothing but an explicit check stops it — and go-sunrise turns
+// a NaN latitude into a time in the year 292277026596 rather than into an
+// absent event, which is exactly the misleading value SUN-27 exists to keep out
+// of the table.
+func TestRunRejectsCoordinatesThatAreNotNumbers(t *testing.T) {
+	fakeHome(t)
+	pinStyle(t, render.Plain())
+
+	for name, contents := range map[string]string{
+		"NaN latitude":       "latitude = nan\nlongitude = 15.63\n",
+		"NaN longitude":      "latitude = 78.22\nlongitude = nan\n",
+		"infinite latitude":  "latitude = inf\nlongitude = 15.63\n",
+		"infinite longitude": "latitude = 78.22\nlongitude = -inf\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := writeConfig(t, contents)
+
+			out, err := execute(t, "--config", path, "--date", "2026-06-21")
+			if err == nil {
+				t.Fatalf("run accepted %s, want a non-zero exit\n---\n%s", name, out)
+			}
+			if !strings.Contains(err.Error(), path) {
+				t.Errorf("error %q does not name the file %q", err, path)
+			}
+			if strings.Contains(out, "│") {
+				t.Errorf("a table was printed for %s:\n%s", name, out)
+			}
+		})
 	}
 }

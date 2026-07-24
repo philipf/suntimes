@@ -26,9 +26,9 @@ import (
 )
 
 // Placeholder stands in for an event that does not occur on a given day
-// (SUN-27). Nothing routinely produces one yet — issue #7 adds the no-event
-// detection — but every cell is rendered through the same path, so the case is
-// already handled rather than waiting to be discovered.
+// (SUN-27). Absence is decided per event, up in the sun package, so a row may
+// hold placeholders beside real times: a polar spring day has a sunrise and a
+// sunset but no dawn or dusk, and a polar autumn day the other way round.
 //
 // It is one character three bytes wide. Column widths are measured in display
 // cells by lipgloss, not in bytes, so a placeholder occupies exactly as much of
