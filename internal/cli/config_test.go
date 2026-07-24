@@ -36,6 +36,17 @@ func writeConfig(t *testing.T, contents string) string {
 	return path
 }
 
+// mustLoadLocation resolves an IANA name the test itself depends on.
+func mustLoadLocation(t *testing.T, name string) *time.Location {
+	t.Helper()
+
+	zone, err := time.LoadLocation(name)
+	if err != nil {
+		t.Fatalf("loading timezone %q: %v", name, err)
+	}
+	return zone
+}
+
 // SUN-1, SUN-3: with no --config, the first run creates the sample at the
 // default location and says where it put it.
 func TestFirstRunCreatesSampleAtDefaultPath(t *testing.T) {
@@ -161,12 +172,19 @@ func resultRows(t *testing.T, out string) [][]string {
 // coordinates produce rows of times. SUN-11: the first row is today's.
 func TestRunPrintsARowForTheConfiguredLocation(t *testing.T) {
 	fakeHome(t)
-	path := writeConfig(t, "latitude = -36.8485\nlongitude = 174.7633\ntimezone = \"Pacific/Auckland\"\n")
+	const timezone = "Pacific/Auckland"
+	path := writeConfig(t, "latitude = -36.8485\nlongitude = 174.7633\ntimezone = \""+timezone+"\"\n")
 
-	// Bracket the run, because the local date can turn over mid-test.
-	before := time.Now().In(time.Local).Format("2006-01-02")
+	// SUN-11's "today" is today in the configured timezone, not the host's, so
+	// the expectation is read in that same zone. Bracketing the host zone
+	// instead would pass only on a machine already set to it, and fail
+	// anywhere the two are on different sides of midnight.
+	zone := mustLoadLocation(t, timezone)
+
+	// Bracket the run, because the date in that zone can turn over mid-test.
+	before := time.Now().In(zone).Format("2006-01-02")
 	out, err := execute(t, "--config", path)
-	after := time.Now().In(time.Local).Format("2006-01-02")
+	after := time.Now().In(zone).Format("2006-01-02")
 	if err != nil {
 		t.Fatalf("run returned error %v, want nil", err)
 	}

@@ -1,5 +1,7 @@
 # suntimes
 
+[![CI](https://github.com/philipf/suntimes/actions/workflows/ci.yml/badge.svg)](https://github.com/philipf/suntimes/actions/workflows/ci.yml)
+
 A portable Go CLI that prints dawn, sunrise, sunset and dusk for a configured
 location and date range — computed entirely offline.
 
@@ -108,6 +110,9 @@ To work on the code:
    ```sh
    make check    # gofmt check, go vet, and tests
    ```
+
+   GitHub Actions runs these same checks on every pull request, so a red build
+   means one of them failed.
 
 4. Open a pull request describing what changed and why. New behaviour should
    line up with the requirements in [docs/PRD.md](docs/PRD.md) — if your change
