@@ -8,12 +8,14 @@ package cli
 
 import (
 	"fmt"
-	"strconv"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/philipf/suntimes/internal/buildinfo"
 	"github.com/philipf/suntimes/internal/config"
+	"github.com/philipf/suntimes/internal/render"
+	"github.com/philipf/suntimes/internal/sun"
 )
 
 // Options holds the values parsed from the root command's flags. It is the
@@ -43,14 +45,6 @@ configuration file; no network access is required.
 
 With no date flags, suntimes shows the current date and the following six
 days. Use --days, --from/--to or --date to choose a different range.`
-
-	// systemTimezoneNotice describes an unset timezone in the report below
-	// (SUN-8).
-	systemTimezoneNotice = "(unset — this machine's local timezone)"
-
-	// pendingCalculationNotice stands in for the results table until sun-time
-	// calculation is implemented.
-	pendingCalculationNotice = "Sun-time calculation is not implemented yet."
 )
 
 // NewRootCommand builds the root `suntimes` command. A fresh command is
@@ -91,8 +85,8 @@ func NewRootCommand() *cobra.Command {
 }
 
 // run executes the root command: it resolves and loads the configuration,
-// creating a sample on first run, then reports what it read. Calculation and
-// table rendering are later work.
+// creating a sample on first run, then computes the sun times for the
+// requested days and renders them.
 func run(cmd *cobra.Command, opts *Options) error {
 	path, err := config.Resolve(opts.ConfigPath)
 	if err != nil {
@@ -116,18 +110,26 @@ func run(cmd *cobra.Command, opts *Options) error {
 		return err
 	}
 
-	timezone := cfg.Timezone
-	if timezone == "" {
-		timezone = systemTimezoneNotice
+	// SUN-8: with nothing configured, times are shown in the host machine's
+	// local timezone. Honouring cfg.Timezone instead (SUN-7, SUN-9, SUN-10) is
+	// issue #4, and hooks in here: resolve the configured name to a
+	// *time.Location and use it in place of time.Local. Everything downstream
+	// already takes the display zone as a parameter.
+	zone := time.Local
+
+	place := sun.Place{Latitude: cfg.Latitude, Longitude: cfg.Longitude}
+
+	// Just today for now. Turning the flags in opts into a range of dates
+	// (SUN-11..SUN-17) is issue #5; the rest of the pipeline already works on
+	// a slice, so only this line changes.
+	dates := []sun.Date{sun.Today(zone)}
+
+	days := make([]sun.Day, 0, len(dates))
+	for _, date := range dates {
+		days = append(days, sun.Times(place, date))
 	}
 
-	return report(cmd,
-		fmt.Sprintf("Configuration: %s", cfg.Path),
-		fmt.Sprintf("Latitude:      %s", degrees(cfg.Latitude)),
-		fmt.Sprintf("Longitude:     %s", degrees(cfg.Longitude)),
-		fmt.Sprintf("Timezone:      %s", timezone),
-		"",
-		pendingCalculationNotice)
+	return render.Table(cmd.OutOrStdout(), days, zone)
 }
 
 // report writes lines to the command's output stream, which tests replace with
@@ -140,10 +142,4 @@ func report(cmd *cobra.Command, lines ...string) error {
 		}
 	}
 	return nil
-}
-
-// degrees renders a coordinate without the trailing zeros a fixed precision
-// would add, so -36.8485 reads back exactly as it was configured.
-func degrees(value float64) string {
-	return strconv.FormatFloat(value, 'f', -1, 64)
 }

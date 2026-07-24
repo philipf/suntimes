@@ -3,6 +3,7 @@ module github.com/philipf/suntimes
 go 1.25.5
 
 require (
+	github.com/nathan-osman/go-sunrise v1.1.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
 )

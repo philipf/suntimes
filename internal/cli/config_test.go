@@ -3,8 +3,10 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
+	"time"
 )
 
 // fakeHome points os.UserHomeDir at a temporary directory, so no test ever
@@ -74,38 +76,53 @@ func TestFirstRunCreatesSampleAtFlagPath(t *testing.T) {
 	}
 }
 
-// SUN-2: a valid file is read from the --config path and its values reported.
-func TestRunReportsResolvedConfiguration(t *testing.T) {
+// rowPattern is one plain result row: date, three-letter weekday, then four
+// 24-hour times (SUN-21, SUN-22, SUN-23).
+var rowPattern = regexp.MustCompile(
+	`^(\d{4}-\d{2}-\d{2})  [A-Z][a-z]{2}(  (?:\d{2}:\d{2}|—)){4}$`)
+
+// SUN-2, SUN-6, SUN-20: a valid file is read from the --config path, and its
+// coordinates produce a row of times for today.
+func TestRunPrintsARowForTheConfiguredLocation(t *testing.T) {
 	fakeHome(t)
 	path := writeConfig(t, "latitude = -36.8485\nlongitude = 174.7633\ntimezone = \"Pacific/Auckland\"\n")
 
+	// Bracket the run, because the local date can turn over mid-test.
+	before := time.Now().In(time.Local).Format("2006-01-02")
 	out, err := execute(t, "--config", path)
+	after := time.Now().In(time.Local).Format("2006-01-02")
 	if err != nil {
 		t.Fatalf("run returned error %v, want nil", err)
 	}
 
-	for _, want := range []string{path, "-36.8485", "174.7633", "Pacific/Auckland"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("output does not report %q\n---\n%s", want, out)
-		}
+	lines := strings.Split(strings.TrimSuffix(out, "\n"), "\n")
+	if len(lines) != 1 {
+		t.Fatalf("run printed %d lines, want a single row\n---\n%s", len(lines), out)
+	}
+
+	match := rowPattern.FindStringSubmatch(lines[0])
+	if match == nil {
+		t.Fatalf("output %q does not match a result row %s", lines[0], rowPattern)
+	}
+	// SUN-11 for a single day: the row is for the current date.
+	if date := match[1]; date != before && date != after {
+		t.Errorf("row is for %s, want today (%s or %s)", date, before, after)
 	}
 }
 
-// SUN-8: no configured timezone is reported as the machine's local one.
-func TestRunReportsSystemTimezoneWhenUnset(t *testing.T) {
+// SUN-8: with no timezone configured the run still succeeds, showing times in
+// the host machine's local timezone. The configured name is issue #4.
+func TestRunPrintsARowWithNoTimezoneConfigured(t *testing.T) {
 	fakeHome(t)
+	// 0,0 is the Gulf of Guinea, a valid location — not a missing value.
 	path := writeConfig(t, "latitude = 0\nlongitude = 0\n")
 
 	out, err := execute(t, "--config", path)
 	if err != nil {
 		t.Fatalf("run returned error %v, want nil", err)
 	}
-	if !strings.Contains(out, systemTimezoneNotice) {
-		t.Errorf("output does not report the fallback timezone\n---\n%s", out)
-	}
-	// 0,0 is the Gulf of Guinea, a valid location — not a missing value.
-	if !strings.Contains(out, "Latitude:      0") {
-		t.Errorf("output does not report latitude 0\n---\n%s", out)
+	if !rowPattern.MatchString(strings.TrimSuffix(out, "\n")) {
+		t.Errorf("output %q does not match a result row %s", out, rowPattern)
 	}
 }
 
