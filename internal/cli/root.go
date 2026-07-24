@@ -8,10 +8,12 @@ package cli
 
 import (
 	"fmt"
+	"strconv"
 
 	"github.com/spf13/cobra"
 
 	"github.com/philipf/suntimes/internal/buildinfo"
+	"github.com/philipf/suntimes/internal/config"
 )
 
 // Options holds the values parsed from the root command's flags. It is the
@@ -42,9 +44,13 @@ configuration file; no network access is required.
 With no date flags, suntimes shows the current date and the following six
 days. Use --days, --from/--to or --date to choose a different range.`
 
-	// placeholderNotice is printed until configuration loading and sun-time
-	// calculation are implemented.
-	placeholderNotice = "suntimes: nothing to show yet — configuration loading and sun-time calculation are not implemented."
+	// systemTimezoneNotice describes an unset timezone in the report below
+	// (SUN-8).
+	systemTimezoneNotice = "(unset — this machine's local timezone)"
+
+	// pendingCalculationNotice stands in for the results table until sun-time
+	// calculation is implemented.
+	pendingCalculationNotice = "Sun-time calculation is not implemented yet."
 )
 
 // NewRootCommand builds the root `suntimes` command. A fresh command is
@@ -84,9 +90,60 @@ func NewRootCommand() *cobra.Command {
 	return cmd
 }
 
-// run executes the root command. It currently has nothing to compute, so it
-// prints a placeholder and succeeds (SUN-30).
-func run(cmd *cobra.Command, _ *Options) error {
-	_, err := fmt.Fprintln(cmd.OutOrStdout(), placeholderNotice)
-	return err
+// run executes the root command: it resolves and loads the configuration,
+// creating a sample on first run, then reports what it read. Calculation and
+// table rendering are later work.
+func run(cmd *cobra.Command, opts *Options) error {
+	path, err := config.Resolve(opts.ConfigPath)
+	if err != nil {
+		return err
+	}
+
+	created, err := config.CreateSampleIfMissing(path)
+	if err != nil {
+		return err
+	}
+	if created {
+		// SUN-3: report the new file and stop; the sample's coordinates are an
+		// example, so computing from them would be misleading.
+		return report(cmd,
+			fmt.Sprintf("Created a sample configuration at %s", path),
+			"Edit it to set your location, then run suntimes again.")
+	}
+
+	cfg, err := config.Load(path)
+	if err != nil {
+		return err
+	}
+
+	timezone := cfg.Timezone
+	if timezone == "" {
+		timezone = systemTimezoneNotice
+	}
+
+	return report(cmd,
+		fmt.Sprintf("Configuration: %s", cfg.Path),
+		fmt.Sprintf("Latitude:      %s", degrees(cfg.Latitude)),
+		fmt.Sprintf("Longitude:     %s", degrees(cfg.Longitude)),
+		fmt.Sprintf("Timezone:      %s", timezone),
+		"",
+		pendingCalculationNotice)
+}
+
+// report writes lines to the command's output stream, which tests replace with
+// a buffer.
+func report(cmd *cobra.Command, lines ...string) error {
+	out := cmd.OutOrStdout()
+	for _, line := range lines {
+		if _, err := fmt.Fprintln(out, line); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// degrees renders a coordinate without the trailing zeros a fixed precision
+// would add, so -36.8485 reads back exactly as it was configured.
+func degrees(value float64) string {
+	return strconv.FormatFloat(value, 'f', -1, 64)
 }

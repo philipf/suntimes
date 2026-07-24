@@ -88,12 +88,14 @@ func TestHelpFlagsDescribeAllFlags(t *testing.T) {
 
 // SUN-30: a successful run exits zero.
 func TestRunWithNoArgsSucceeds(t *testing.T) {
+	fakeHome(t)
+
 	out, err := execute(t)
 	if err != nil {
 		t.Fatalf("bare run returned error %v, want nil (exit status zero)", err)
 	}
 	if strings.TrimSpace(out) == "" {
-		t.Error("bare run printed nothing, want a placeholder line")
+		t.Error("bare run printed nothing, want a report of what it did")
 	}
 }
 
