@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# A newer push to the same branch supersedes any run still in flight.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: gofmt, vet and tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # go-version-file keeps the toolchain pinned to go.mod, so bumping the
+      # module's Go version bumps CI with it. cache: true (the default) caches
+      # both the module download cache and the build cache, keyed on go.sum.
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # The same checks as `make check`, run as separate steps so a failure
+      # names which one broke.
+      - name: gofmt
+        run: make fmt-check
+
+      - name: go vet
+        run: make vet
+
+      - name: tests
+        run: make test
