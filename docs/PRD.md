@@ -32,7 +32,6 @@ The following are explicitly **out of scope** for the first version:
 - Moon phase, golden hour, or blue hour.
 - Interactive TUI.
 - Automatic location detection or place-name geocoding.
-- Release automation / packaging beyond `go build` and a `Makefile`.
 
 ## 4. Users & primary use case
 
@@ -127,6 +126,8 @@ Throughout, `<system>` is **`suntimes`**.
 - **NFR-4 (Accuracy):** The `suntimes` application shall compute times accurate to within approximately one minute for mid-latitude locations.
 - **NFR-5 (Build tooling):** The project shall provide a `Makefile` with a `build` target and cross-compilation targets (Linux/macOS/Windows, amd64/arm64).
 - **NFR-6 (Module):** The project shall use the Go module path `github.com/philipf/suntimes`.
+- **NFR-7 (Release artefacts):** The project shall publish, for each supported platform and architecture (Linux/macOS/Windows, amd64/arm64), an archive containing the binary and the README, together with a checksums file covering every archive.
+- **NFR-8 (Version stamping):** A binary taken from a release archive shall report the version of the release that produced it (SUN-29), not a placeholder.
 
 ## 8. Configuration file — reference
 
