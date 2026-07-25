@@ -1,0 +1,73 @@
+# GoReleaser builds the archives a release publishes (NFR-1, NFR-5).
+#
+# The build settings below mirror the Makefile's GOENV, BUILDFLAGS and LDFLAGS,
+# so a released binary is the binary `make build` produces — only
+# cross-compiled and archived. Change them in both places: release_test.go
+# fails if they drift apart.
+#
+# Locally: `make snapshot` (archives + checksums, no tag, nothing published).
+version: 2
+
+project_name: suntimes
+
+# GoReleaser's default anyway, but set explicitly because the Makefile's DIST
+# points here too and says so — leaving it implicit lets one move without the
+# other noticing.
+dist: dist
+
+before:
+  hooks:
+    # Fail on a missing or mismatched dependency before six builds start,
+    # rather than six times over. Downloads only; it never edits go.mod.
+    - go mod download
+
+builds:
+  - id: suntimes
+    main: .
+    binary: suntimes
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+      - -buildvcs=false
+    # GoReleaser's default ldflags stamp main.version, which this project does
+    # not read — the build would succeed, the archive would look right, and the
+    # binary inside would report "dev". Stamp internal/buildinfo instead.
+    ldflags:
+      - -s -w -X github.com/philipf/suntimes/internal/buildinfo.Version={{.Version}}
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    # Datestamp the packaged files from the commit rather than the clock, so
+    # rebuilding a tag produces byte-identical archives.
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: suntimes
+    ids:
+      - suntimes
+    # tar.gz everywhere except Windows, where zip is what a double-click opens.
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+      # A glob, so archives keep building until the licence lands, and pick it
+      # up without another edit when it does.
+      - LICENSE*
+
+checksum:
+  name_template: checksums.txt
+
+snapshot:
+  # Marks an untagged local build as what it is, so a snapshot archive is never
+  # mistaken for a release one.
+  version_template: "{{ incpatch .Version }}-snapshot-{{ .ShortCommit }}"
