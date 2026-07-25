@@ -72,8 +72,9 @@ checksum:
 # checks out full history — from a shallow clone there is nothing to list.
 changelog:
   use: git
-  # Oldest first, so the notes read in the order the work happened.
-  sort: asc
+  # No `sort`: it orders the notes by commit message text rather than by date,
+  # which files every "Add …" above every "fix …" whatever order the work
+  # happened in. Left unset, the notes keep git log order — most recent first.
   filters:
     exclude:
       # Merge commits restate what the commits they bring in already say.
