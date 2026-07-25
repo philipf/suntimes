@@ -41,9 +41,60 @@ See [docs/PRD.md](docs/PRD.md) for the full requirements.
 
 ## Install
 
-Requires Go 1.25+ to build. There are no runtime dependencies.
+### Download a binary
+
+Every [release](https://github.com/philipf/suntimes/releases/latest) carries an
+archive for Linux, macOS and Windows on both amd64 and arm64. Each contains the
+`suntimes` binary, this README and the licence — no Go toolchain, no runtime
+dependencies. Set `VERSION` to the release you want, without the leading `v`:
+
+**Linux** — `linux_amd64`, or `linux_arm64` on a Raspberry Pi or an arm64
+server:
+
+```sh
+VERSION=1.0.0
+ARCHIVE=suntimes_${VERSION}_linux_amd64.tar.gz
+curl -fsSLO "https://github.com/philipf/suntimes/releases/download/v$VERSION/$ARCHIVE"
+tar -xzf "$ARCHIVE" suntimes
+install -Dm755 suntimes ~/.local/bin/suntimes    # or /usr/local/bin, with sudo
+```
+
+**macOS** — `darwin_arm64` for Apple silicon, `darwin_amd64` for Intel:
+
+```sh
+VERSION=1.0.0
+ARCHIVE=suntimes_${VERSION}_darwin_arm64.tar.gz
+curl -fsSLO "https://github.com/philipf/suntimes/releases/download/v$VERSION/$ARCHIVE"
+tar -xzf "$ARCHIVE" suntimes
+sudo install -m 755 suntimes /usr/local/bin/suntimes
+```
+
+The binaries are unsigned. If you download one through a browser, macOS
+quarantines it; clear that with `xattr -d com.apple.quarantine ./suntimes`.
+
+**Windows** — download `suntimes_<version>_windows_amd64.zip` (or
+`windows_arm64`) from the release page, extract it, and put `suntimes.exe`
+somewhere on your `PATH`. In PowerShell:
+
+```powershell
+$Version = "1.0.0"
+Invoke-WebRequest "https://github.com/philipf/suntimes/releases/download/v$Version/suntimes_${Version}_windows_amd64.zip" -OutFile suntimes.zip
+Expand-Archive suntimes.zip -DestinationPath .
+```
+
+Each release also publishes `checksums.txt` covering every archive, so a
+downloaded archive can be verified before it is unpacked:
+
+```sh
+curl -fsSLO "https://github.com/philipf/suntimes/releases/download/v$VERSION/checksums.txt"
+grep "$ARCHIVE" checksums.txt | sha256sum -c -      # macOS: shasum -a 256 -c -
+```
+
+Once installed, `suntimes --version` reports the release you took it from.
 
 ### With `go install`
+
+With a Go 1.25+ toolchain:
 
 ```sh
 go install github.com/philipf/suntimes@latest

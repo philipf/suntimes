@@ -1,0 +1,47 @@
+name: Release
+
+# Cutting a release is a `git push` of a tag; everything below happens without
+# a maintainer's machine. .goreleaser.yaml describes what gets built and
+# published — this file only arranges for GoReleaser to run with what it needs.
+on:
+  push:
+    tags: ["v*"]
+
+# Publishing a release creates a release object and uploads its assets, neither
+# of which the default read-only token can do. Nothing else here writes, so the
+# grant stops at contents.
+permissions:
+  contents: write
+
+jobs:
+  goreleaser:
+    name: Build and publish the release
+    runs-on: ubuntu-latest
+    # Six cross-compiled targets, archived and uploaded — minutes, not tens of
+    # minutes. The default ceiling is six hours.
+    timeout-minutes: 30
+    steps:
+      # fetch-depth: 0 for the full history and tags. Actions checks out a
+      # single commit by default, which GoReleaser rejects outright — and the
+      # release notes are the commits since the previous tag, so it needs those
+      # too.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # Same toolchain as CI: pinned to go.mod, so a released binary is built
+      # with the Go the tests ran on.
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: goreleaser/goreleaser-action@v7
+        with:
+          # Any v2 release. .goreleaser.yaml declares `version: 2`, and pinning
+          # a patch here would mean a dependabot PR per GoReleaser release.
+          version: "~> v2"
+          args: release --clean
+        env:
+          # The workflow-scoped token above; no PAT, and nothing to rotate.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
