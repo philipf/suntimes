@@ -67,6 +67,23 @@ archives:
 checksum:
   name_template: checksums.txt
 
+# Release notes, written from the commits between this tag and the previous
+# one. `use: git` reads the local git log, which is why the release workflow
+# checks out full history — from a shallow clone there is nothing to list.
+changelog:
+  use: git
+  # Oldest first, so the notes read in the order the work happened.
+  sort: asc
+  filters:
+    exclude:
+      # Merge commits restate what the commits they bring in already say.
+      - "^Merge "
+
+release:
+  # A tag with a prerelease suffix (v1.0.0-rc.1) publishes as a prerelease, so
+  # it neither shows as latest nor gets picked up by anything tracking latest.
+  prerelease: auto
+
 snapshot:
   # Marks an untagged local build as what it is, so a snapshot archive is never
   # mistaken for a release one.
