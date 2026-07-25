@@ -14,10 +14,18 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X $(MODULE)/internal/buildinfo.Version=$(VERSION)
 
 GO      := go
+GOENV   := CGO_ENABLED=0
 # -buildvcs=false: the version is stamped explicitly via -ldflags above, so the
 # build does not need Go's VCS metadata. Disabling it also keeps builds working
 # in git worktree checkouts, where Go can misidentify the repository root.
-GOBUILD := CGO_ENABLED=0 $(GO) build -trimpath -buildvcs=false -ldflags "$(LDFLAGS)"
+BUILDFLAGS := -trimpath -buildvcs=false
+GOBUILD := $(GOENV) $(GO) build $(BUILDFLAGS) -ldflags "$(LDFLAGS)"
+
+# GoReleaser (see .goreleaser.yaml) produces the release archives, and repeats
+# GOENV, BUILDFLAGS and LDFLAGS so a released binary is the binary `make build`
+# produces. Change them here and there together: release_test.go fails if the
+# two drift apart.
+GORELEASER ?= goreleaser
 
 # host os/arch × the platforms we cross-compile for
 PLATFORMS := \
@@ -42,7 +50,7 @@ build: ## Build the binary for the host platform
 
 .PHONY: install
 install: ## Install the binary into GOBIN
-	CGO_ENABLED=0 $(GO) install -trimpath -buildvcs=false -ldflags "$(LDFLAGS)" .
+	$(GOENV) $(GO) install $(BUILDFLAGS) -ldflags "$(LDFLAGS)" .
 
 .PHONY: test
 test: ## Run the tests
@@ -94,6 +102,27 @@ build-darwin-amd64:  $(DIST)/$(BINARY)_darwin_amd64  ## Cross-compile for darwin
 build-darwin-arm64:  $(DIST)/$(BINARY)_darwin_arm64  ## Cross-compile for darwin/arm64
 build-windows-amd64: $(DIST)/$(BINARY)_windows_amd64 ## Cross-compile for windows/amd64
 build-windows-arm64: $(DIST)/$(BINARY)_windows_arm64 ## Cross-compile for windows/arm64
+
+# Release artefacts. `make cross` above compiles bare binaries for a quick
+# local check and needs nothing but Go; these targets need GoReleaser v2
+# (go install github.com/goreleaser/goreleaser/v2@latest) and produce what a
+# release actually publishes — archives and a checksums file. Both write to
+# $(DIST) — .goreleaser.yaml sets `dist` to match — and --clean empties it
+# first, so a snapshot discards any binaries `make cross` left behind.
+.PHONY: snapshot
+snapshot: ## Build release archives and checksums locally, without tagging or publishing
+	$(GORELEASER) release --snapshot --clean
+
+.PHONY: release-check
+release-check: ## Validate .goreleaser.yaml
+	$(GORELEASER) check
+
+# Expand a single variable, e.g. `make print-LDFLAGS`. Used by release_test.go
+# to compare the Makefile's build settings against .goreleaser.yaml. Not .PHONY:
+# make matches .PHONY prerequisites literally, so a pattern there would declare
+# a target named "print-%" and do nothing for print-LDFLAGS.
+print-%:
+	@echo '$($*)'
 
 .PHONY: clean
 clean: ## Remove build artefacts
