@@ -33,6 +33,11 @@ The following are explicitly **out of scope** for the first version:
 - Interactive TUI.
 - Automatic location detection or place-name geocoding.
 
+Release automation and packaging were originally listed here as out of scope. They are now
+**in scope** for v1 — see NFR-7 and NFR-8, and
+[ADR-0001](adr/0001-release-automation-and-packaging.md) for why the scope changed and how
+releases are built and distributed.
+
 ## 4. Users & primary use case
 
 A single technical user runs `suntimes` from a terminal to see, at a glance, when
@@ -126,7 +131,7 @@ Throughout, `<system>` is **`suntimes`**.
 - **NFR-4 (Accuracy):** The `suntimes` application shall compute times accurate to within approximately one minute for mid-latitude locations.
 - **NFR-5 (Build tooling):** The project shall provide a `Makefile` with a `build` target and cross-compilation targets (Linux/macOS/Windows, amd64/arm64).
 - **NFR-6 (Module):** The project shall use the Go module path `github.com/philipf/suntimes`.
-- **NFR-7 (Release artefacts):** The project shall publish, for each supported platform and architecture (Linux/macOS/Windows, amd64/arm64), an archive containing the binary and the README, together with a checksums file covering every archive.
+- **NFR-7 (Release artefacts):** The project shall publish, for each supported platform and architecture (Linux/macOS/Windows, amd64/arm64), an archive containing the binary, the README and the licence, together with a checksums file covering every archive.
 - **NFR-8 (Version stamping):** A binary taken from a release archive shall report the version of the release that produced it (SUN-29), not a placeholder.
 
 ## 8. Configuration file — reference

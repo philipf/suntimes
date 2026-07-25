@@ -1,15 +1,21 @@
 package main
 
+// Tests over what a release ships, where the failure mode is silent — nothing
+// here breaks a build, so nothing here fails until someone downloads the
+// artefact.
+//
 // Build settings live in two places: the Makefile, for local and
 // cross-compiled builds, and .goreleaser.yaml, for the archives a release
-// publishes. These tests hold the two in step, because drift between them is
-// silent — a release binary linked without the buildinfo ldflag still runs, it
-// just reports "dev".
+// publishes. Most of these tests hold the two in step, because a release
+// binary linked without the buildinfo ldflag still runs, it just reports
+// "dev". The rest cover the files travelling alongside that binary (NFR-7).
 
 import (
 	"os"
 	"os/exec"
+	"path"
 	"reflect"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -34,11 +40,18 @@ type goreleaserBuild struct {
 	Ignore  []map[string]string `yaml:"ignore"`
 }
 
-type goreleaserConfig struct {
-	Builds []goreleaserBuild `yaml:"builds"`
+// goreleaserArchive is the slice of .goreleaser.yaml that decides which files
+// travel alongside the binary in a release archive.
+type goreleaserArchive struct {
+	Files []string `yaml:"files"`
 }
 
-func loadGoreleaserBuild(t *testing.T) goreleaserBuild {
+type goreleaserConfig struct {
+	Builds   []goreleaserBuild   `yaml:"builds"`
+	Archives []goreleaserArchive `yaml:"archives"`
+}
+
+func loadGoreleaserConfig(t *testing.T) goreleaserConfig {
 	t.Helper()
 
 	raw, err := os.ReadFile(".goreleaser.yaml")
@@ -50,11 +63,32 @@ func loadGoreleaserBuild(t *testing.T) goreleaserBuild {
 	if err := yaml.Unmarshal(raw, &cfg); err != nil {
 		t.Fatalf("parsing .goreleaser.yaml: %v", err)
 	}
-	if len(cfg.Builds) != 1 {
-		t.Fatalf("want exactly one build stanza, got %d — the assertions below "+
-			"read builds[0] and would quietly stop covering the rest", len(cfg.Builds))
+	return cfg
+}
+
+// onlyStanza returns the single stanza of a .goreleaser.yaml list. The tests
+// below read index 0; a second stanza would leave them quietly covering half a
+// release, so it fails loudly instead.
+func onlyStanza[T any](t *testing.T, kind string, stanzas []T) T {
+	t.Helper()
+
+	if len(stanzas) != 1 {
+		t.Fatalf("want exactly one %s stanza, got %d — the assertions here read "+
+			"%ss[0] and would quietly stop covering the rest", kind, len(stanzas), kind)
 	}
-	return cfg.Builds[0]
+	return stanzas[0]
+}
+
+func loadGoreleaserBuild(t *testing.T) goreleaserBuild {
+	t.Helper()
+
+	return onlyStanza(t, "build", loadGoreleaserConfig(t).Builds)
+}
+
+func loadGoreleaserArchive(t *testing.T) goreleaserArchive {
+	t.Helper()
+
+	return onlyStanza(t, "archive", loadGoreleaserConfig(t).Archives)
 }
 
 // makeVar expands a Makefile variable, with VERSION pinned to GoReleaser's
@@ -74,6 +108,56 @@ func makeVar(t *testing.T, name string) string {
 		t.Fatalf("make print-%s: %v", name, err)
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// TestLicenseIsMIT checks the repo carries an MIT licence at the root, with a
+// copyright line naming a holder and a year. Everything downstream reads it
+// from there: GoReleaser packs it into the archives, and Homebrew, Scoop and
+// the Linux package formats each want a licence to declare.
+func TestLicenseIsMIT(t *testing.T) {
+	raw, err := os.ReadFile("LICENSE")
+	if err != nil {
+		t.Fatalf("reading LICENSE: %v", err)
+	}
+	text := string(raw)
+
+	if !strings.Contains(text, "MIT License") {
+		t.Errorf("LICENSE heading = %q, want it to announce the MIT License",
+			strings.SplitN(text, "\n", 2)[0])
+	}
+
+	// The permission grant, verbatim from the MIT text — a licence missing it
+	// grants nothing, however MIT the heading claims to be.
+	const grant = "Permission is hereby granted, free of charge, to any person obtaining a copy"
+	if !strings.Contains(text, grant) {
+		t.Errorf("LICENSE is missing the MIT permission grant %q", grant)
+	}
+
+	copyright := regexp.MustCompile(`Copyright \(c\) \d{4} \S`)
+	if !copyright.MatchString(text) {
+		t.Errorf("LICENSE has no line matching %v, want `Copyright (c) <year> <holder>`", copyright)
+	}
+}
+
+// TestReleaseArchivesCarryLicense checks the licence actually ships (NFR-7).
+// The archive stanza names its extra files by glob, so a LICENSE at the root
+// travels only while some glob still matches it.
+func TestReleaseArchivesCarryLicense(t *testing.T) {
+	archive := loadGoreleaserArchive(t)
+
+	for _, pattern := range archive.Files {
+		ok, err := path.Match(pattern, "LICENSE")
+		if err != nil {
+			// Reported here rather than left to fall through as "no match",
+			// which would blame the archive list for a broken pattern.
+			t.Fatalf("archives[0].files pattern %q is malformed: %v", pattern, err)
+		}
+		if ok {
+			return
+		}
+	}
+	t.Errorf("archives[0].files = %v, want an entry matching LICENSE; "+
+		"release archives would ship without it", archive.Files)
 }
 
 // TestGoReleaserStampsBuildinfoVersion pins the one setting with a silent

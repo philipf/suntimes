@@ -58,10 +58,10 @@ archives:
         formats:
           - zip
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    # NFR-7: the binary, the README and the licence. A glob on the last, so a
+    # rename to LICENSE.md or LICENCE doesn't silently drop it from the archive.
     files:
       - README.md
-      # A glob, so archives keep building until the licence lands, and pick it
-      # up without another edit when it does.
       - LICENSE*
 
 checksum:
