@@ -1,6 +1,7 @@
 # suntimes
 
 [![CI](https://github.com/philipf/suntimes/actions/workflows/ci.yml/badge.svg)](https://github.com/philipf/suntimes/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 A portable Go CLI that prints dawn, sunrise, sunset and dusk for a configured
 location and date range — computed entirely offline.
@@ -119,3 +120,7 @@ To work on the code:
    goes beyond them, open an issue first to discuss it.
 
 `make help` lists all available build targets.
+
+## Licence
+
+MIT — see [LICENSE](LICENSE). Copyright © 2026 Philip Fourie.
