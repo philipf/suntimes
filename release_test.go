@@ -56,6 +56,7 @@ type goreleaserArchive struct {
 type goreleaserChangelog struct {
 	Disable any    `yaml:"disable"`
 	Use     string `yaml:"use"`
+	Sort    string `yaml:"sort"`
 }
 
 type goreleaserConfig struct {
@@ -285,6 +286,14 @@ func TestGoReleaserWritesReleaseNotesFromGitLog(t *testing.T) {
 	if changelog.Use != "git" {
 		t.Errorf("changelog.use = %q, want %q (the commits since the previous tag)",
 			changelog.Use, "git")
+	}
+
+	// `sort` reads like chronology and is not: it orders the notes by commit
+	// message text, which published v0.1.0 with every "Add …" above every
+	// "fix …". Unset is git log order, which is what a reader expects.
+	if changelog.Sort != "" {
+		t.Errorf("changelog.sort = %q, want it unset; it sorts the notes "+
+			"alphabetically by commit message, not by date", changelog.Sort)
 	}
 }
 
